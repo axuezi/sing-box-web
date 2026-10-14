@@ -31,7 +31,7 @@ vet:
 	@test -z "$$(gofmt -l .)" || (gofmt -l . && echo 'run gofmt -w .' && exit 1)
 
 ## check: everything CI runs
-check: vet test web
+check: web vet test
 	cd web && npm run typecheck
 
 ## dev-api / dev-web: run in two terminals; Vite proxies /api to the backend
