@@ -1,0 +1,61 @@
+/* MobileCards: the phone layout of data tables. */
+.mc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mc-card {
+  border: 1px solid var(--sbw-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.mc-click {
+  cursor: pointer;
+}
+.mc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+}
+.mc-title {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.mc-actions {
+  flex: none;
+}
+.mc-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--sbw-border);
+}
+.mc-label {
+  font-size: 12px;
+  color: var(--viz-muted);
+  margin-bottom: 2px;
+}
+.mc-value {
+  font-size: 13px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.mc-empty {
+  padding: 24px 0;
+}
+
+/* Card headers: never squeeze the title; extra content wraps below it on
+   narrow screens instead. !important because Naive UI injects its own
+   styles at runtime, after this sheet. */
+.n-card-header {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.n-card-header .n-card-header__main {
+  flex: 1 0 auto !important;
+}

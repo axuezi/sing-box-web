@@ -1,0 +1,179 @@
+#!/bin/sh
+# Host-side controller for sing-box-web. The panel drops a request file named
+# <id> containing one whitelisted action into $CTL_DIR/requests; this script
+# runs the action against the sing-box container and writes $CTL_DIR/results/<id>:
+#   line 1: exit code, line 2: UTC time, rest: command output.
+# The panel never gets docker.sock; at worst it can trigger these actions.
+set -u
+. "${SBW_CTL_DEFAULTS:-/etc/default/sing-box-web-ctl}"
+req="$CTL_DIR/requests"; res="$CTL_DIR/results"; tmp="$CTL_DIR/.tmp"
+mkdir -p "$tmp"
+# Optional integrations (see sing-box-web-ctl.default):
+#   F2B_JAILS          fail2ban jails the panel may list, ban and unban
+#   HAPROXY_ACL_DIR    directory with deny.lst / allow.lst read by HAProxy
+#   HAPROXY_CONTAINER  container to reload (USR2) after the lists change
+F2B_JAILS=${F2B_JAILS:-}
+HAPROXY_ACL_DIR=${HAPROXY_ACL_DIR:-}
+HAPROXY_CONTAINER=${HAPROXY_CONTAINER:-}
+
+# --- validation: the panel is not trusted with anything but these shapes ---
+is_ip4() { printf '%s' "$1" | grep -Eqx '([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?'; }
+is_ip6() { printf '%s' "$1" | grep -Eqx '[0-9a-fA-F:]*:[0-9a-fA-F:.]*(/[0-9]{1,3})?'; }
+is_jail() { for j in $F2B_JAILS; do [ "$1" = "$j" ] && return 0; done; return 1; }
+
+# access_apply reads $CTL_DIR/access/spec (written by the panel) and replaces
+# the nftables table inet sbw_access and the HAProxy lists in one go. Lines:
+#   port udp|tcp N      a proxy port nftables guards
+#   deny IP[/LEN]       blocklist entry
+#   allow IP[/LEN]      allowlist entry
+#   allowlist on|off    whether only the allowlist may connect
+access_apply() {
+  spec="$CTL_DIR/access/spec"
+  if [ ! -f "$spec" ] || [ -L "$spec" ]; then echo "no access spec"; return 2; fi
+  udp=""; tcp=""; d4=""; d6=""; a4=""; a6=""; allowlist=off; dlist=""; alist=""
+  while read -r kind a b extra; do
+    [ -n "${extra:-}" ] && { echo "bad line: $kind $a $b $extra"; return 2; }
+    case "$kind" in
+      '') ;;
+      port)
+        case "$b" in ''|*[!0-9]*) echo "bad port: $b"; return 2;; esac
+        [ "$b" -ge 1 ] && [ "$b" -le 65535 ] || { echo "bad port: $b"; return 2; }
+        case "$a" in udp) udp="$udp${udp:+, }$b";; tcp) tcp="$tcp${tcp:+, }$b";; *) echo "bad proto: $a"; return 2;; esac ;;
+      deny|allow)
+        [ -z "${b:-}" ] || { echo "bad line: $kind $a $b"; return 2; }
+        if is_ip4 "$a"; then fam=4; elif is_ip6 "$a"; then fam=6; else echo "bad address: $a"; return 2; fi
+        case "$kind$fam" in
+          deny4) d4="$d4${d4:+, }$a";; deny6) d6="$d6${d6:+, }$a";;
+          allow4) a4="$a4${a4:+, }$a";; allow6) a6="$a6${a6:+, }$a";;
+        esac
+        if [ "$kind" = deny ]; then dlist="$dlist$a
+"; else alist="$alist$a
+"; fi ;;
+      allowlist) case "$a" in on|off) allowlist=$a;; *) echo "bad allowlist: $a"; return 2;; esac ;;
+      *) echo "unknown line: $kind"; return 2 ;;
+    esac
+  done < "$spec"
+
+  set4() { # name type elements
+    printf '  set %s {\n    type %s\n    flags interval\n    auto-merge\n' "$1" "$2"
+    [ -n "$3" ] && printf '    elements = { %s }\n' "$3"
+    printf '  }\n'
+  }
+  nf=$(mktemp "$tmp/nft.XXXXXX")
+  {
+    echo "table inet sbw_access"
+    echo "delete table inet sbw_access"
+    echo "table inet sbw_access {"
+    set4 deny4 ipv4_addr "$d4"; set4 deny6 ipv6_addr "$d6"
+    set4 allow4 ipv4_addr "$a4"; set4 allow6 ipv6_addr "$a6"
+    echo "  chain input {"
+    echo "    type filter hook input priority -5; policy accept;"
+    [ -n "$udp" ] && echo "    udp dport { $udp } jump guard"
+    [ -n "$tcp" ] && echo "    tcp dport { $tcp } jump guard"
+    echo "  }"
+    echo "  chain guard {"
+    echo "    iif \"lo\" return"
+    echo "    ip saddr @deny4 counter drop comment \"deny\""
+    echo "    ip6 saddr @deny6 counter drop comment \"deny\""
+    if [ "$allowlist" = on ]; then
+      echo "    meta nfproto ipv4 ip saddr != @allow4 counter drop comment \"allow\""
+      echo "    meta nfproto ipv6 ip6 saddr != @allow6 counter drop comment \"allow\""
+    fi
+    echo "  }"
+    echo "}"
+  } > "$nf"
+  if ! out=$(nft -c -f "$nf" 2>&1) || ! out=$(nft -f "$nf" 2>&1); then rm -f "$nf"; echo "$out"; return 1; fi
+  rm -f "$nf"
+  echo "nft: udp [${udp}] tcp [${tcp}] deny $(printf '%s' "$dlist" | grep -c .) allow $(printf '%s' "$alist" | grep -c .) allowlist $allowlist"
+
+  if [ -n "$HAPROXY_ACL_DIR" ] && [ -d "$HAPROXY_ACL_DIR" ]; then
+    # With the allowlist off, allow everything so the HAProxy rule is a no-op.
+    [ "$allowlist" = on ] || alist="0.0.0.0/0
+::/0
+"
+    changed=0
+    for pair in "deny.lst:$dlist" "allow.lst:$alist"; do
+      name=${pair%%:*}; body=${pair#*:}
+      t=$(mktemp "$tmp/acl.XXXXXX"); printf '%s' "$body" > "$t"; chmod 644 "$t"
+      if cmp -s "$t" "$HAPROXY_ACL_DIR/$name"; then rm -f "$t"; else mv -f "$t" "$HAPROXY_ACL_DIR/$name"; changed=1; fi
+    done
+    if [ "$changed" = 0 ]; then
+      echo "haproxy: lists unchanged"
+    elif [ -n "$HAPROXY_CONTAINER" ]; then
+      docker kill --signal USR2 "$HAPROXY_CONTAINER" >/dev/null || { echo "haproxy reload failed"; return 1; }
+      echo "haproxy: lists updated, reloaded"
+    else
+      echo "haproxy: lists updated (no container to reload)"
+    fi
+  fi
+}
+
+access_stats() {
+  nft list table inet sbw_access 2>/dev/null |
+    sed -n 's/.*counter packets \([0-9]*\) bytes \([0-9]*\).*comment "\([a-z]*\)".*/\3 \1 \2/p'
+}
+
+# f2b_status prints "jail<TAB>ip<TAB>since<TAB>until" with unix times, so
+# the panel does not have to know the host's time zone.
+f2b_status() {
+  tab=$(printf '\t')
+  for j in $F2B_JAILS; do
+    fail2ban-client get "$j" banip --with-time 2>/dev/null | while IFS="$tab" read -r ip rest; do
+      [ -n "$ip" ] || continue
+      start=${rest%% + *}; end=${rest##* = }
+      printf '%s\t%s\t%s\t%s\n' "$j" "$ip" "$(date -d "$start" +%s 2>/dev/null)" "$(date -d "$end" +%s 2>/dev/null)"
+    done
+  done
+  return 0
+}
+
+for f in "$req"/*; do
+  [ -e "$f" ] || [ -L "$f" ] || continue
+  id=$(basename -- "$f")
+  if [ -L "$f" ] || [ ! -f "$f" ]; then rm -f -- "$f"; continue; fi
+  case "$id" in ''|*[!A-Za-z0-9-]*) rm -f -- "$f"; continue ;; esac
+  # Never act on stale requests: the panel gave up after 20s, and a late
+  # reload/restart would surprise whoever is watching.
+  if [ -n "$(find "$f" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then rm -f -- "$f"; continue; fi
+  [ ${#id} -le 64 ] || { rm -f -- "$f"; continue; }
+  line=$(head -c 256 -- "$f" | head -n 1 | tr -d '\r')
+  rm -f -- "$f"
+  # Split into action + args on spaces, never globbing them.
+  set -f
+  # shellcheck disable=SC2086
+  set -- $line
+  set +f
+  action=${1:-}; arg1=${2:-}; arg2=${3:-}
+
+  case "$action" in
+    reload)  out=$(docker kill --signal HUP "$CONTAINER" 2>&1); rc=$? ;;
+    restart) out=$(docker restart --timeout 10 "$CONTAINER" 2>&1); rc=$? ;;
+    status)  out=$(docker inspect --format '{{.State.Status}} {{.State.StartedAt}} {{.RestartCount}}' "$CONTAINER" 2>&1); rc=$? ;;
+    access-info)
+      out="nft $(command -v nft >/dev/null && echo yes || echo no)
+haproxy $([ -n "$HAPROXY_ACL_DIR" ] && [ -d "$HAPROXY_ACL_DIR" ] && echo yes || echo no)
+fail2ban $([ -n "$F2B_JAILS" ] && command -v fail2ban-client >/dev/null && echo "$F2B_JAILS" || echo no)"; rc=0 ;;
+    access-apply) out=$(access_apply 2>&1); rc=$? ;;
+    access-stats) out=$(access_stats 2>&1); rc=0 ;;
+    f2b-status) out=$(f2b_status 2>&1); rc=$? ;;
+    f2b-ban|f2b-unban)
+      if is_jail "$arg1" && { is_ip4 "$arg2" || is_ip6 "$arg2"; }; then
+        verb=banip; [ "$action" = f2b-unban ] && verb=unbanip
+        out=$(fail2ban-client set "$arg1" "$verb" "$arg2" 2>&1); rc=$?
+      else
+        out="bad jail or address"; rc=2
+      fi ;;
+    *)       out="unknown action"; rc=2 ;;
+  esac
+
+  # Write in a directory the panel cannot see, then rename into place so a
+  # pre-planted symlink in results/ is replaced rather than followed.
+  t=$(mktemp "$tmp/res.XXXXXX")
+  printf '%s\n%s\n%s\n' "$rc" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$out" > "$t"
+  chmod 644 "$t"
+  mv -f -- "$t" "$res/$id"
+  logger -t sing-box-web-ctl "id=$id action=$action rc=$rc"
+done
+
+# Drop results nobody collected within 10 minutes.
+find "$res" -maxdepth 1 -type f -mmin +10 -delete 2>/dev/null || true

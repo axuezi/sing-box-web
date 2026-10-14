@@ -1,0 +1,8 @@
+.git
+bin
+dist
+data
+web/node_modules
+web/dist
+**/*.db
+dist-singbox

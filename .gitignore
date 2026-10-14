@@ -1,0 +1,11 @@
+/bin/
+/dist/
+/dist-singbox/
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+*.db
+*.db-*
+.DS_Store
+.idea/
+.vscode/

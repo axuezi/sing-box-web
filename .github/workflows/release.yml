@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  # sing-box release rebuilt with with_v2ray_api and attached to each
+  # sing-box-web release for install.sh. Bump it together with the
+  # SINGBOX_IMAGE default in the Dockerfile.
+  SINGBOX_VERSION: v1.14.3
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build sing-box with v2ray_api
+        run: scripts/build-sing-box.sh "$SINGBOX_VERSION" dist-singbox
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

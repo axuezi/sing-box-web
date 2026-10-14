@@ -1,0 +1,10 @@
+# Append to /etc/fail2ban/jail.local and adjust logpath to your -auth-log.
+[sing-box-web]
+enabled  = true
+filter   = sing-box-web
+logpath  = /opt/sing-box-web/data/auth.log
+backend  = auto
+maxretry = 5
+findtime = 15m
+bantime  = 1h
+port     = http,https

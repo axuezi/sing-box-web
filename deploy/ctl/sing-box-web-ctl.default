@@ -1,0 +1,10 @@
+# Used by /usr/local/libexec/sing-box-web-ctl
+CONTAINER=sing-box
+CTL_DIR=/opt/sing-box-web/run/ctl
+# Access control (optional). fail2ban jails the panel may manage:
+#F2B_JAILS="sshd sing-box-web"
+# HAProxy in front of TCP inbounds (SNI routing): lists it reads with
+#   tcp-request content reject if { src -f <dir>/deny.lst }
+#   tcp-request content reject unless { src -f <dir>/allow.lst }
+#HAPROXY_ACL_DIR=/opt/web-gateway/sbw-acl
+#HAPROXY_CONTAINER=web-haproxy

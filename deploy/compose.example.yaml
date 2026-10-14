@@ -1,0 +1,32 @@
+# Example: sing-box-web next to a sing-box container whose config lives in
+# /opt/sing-box/config and logs in /opt/sing-box/logs, controlled through the
+# host-side sing-box-web-ctl unit (see deploy/ctl). Put a reverse proxy with
+# TLS in front of 127.0.0.1:9091.
+services:
+  sing-box-web:
+    image: sing-box-web:latest
+    container_name: sing-box-web
+    restart: unless-stopped
+    network_mode: host
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      SBW_LISTEN: 127.0.0.1:9091
+      SBW_CONTROLLER: ctlfile
+      SBW_CTL_DIR: /run/sing-box-web/ctl
+      SBW_AUTH_LOG: /data/auth.log
+      SBW_TRUSTED_PROXIES: 127.0.0.1/32,::1/128
+      TZ: UTC # traffic statistics roll over at midnight in this zone
+      # Optional: real client IPs for inbounds behind an SNI-routing HAProxy
+      # (e.g. Reality); see internal/gateway for the HAProxy log lines.
+      #SBW_GATEWAY_LOG: 127.0.0.1:5514
+    volumes:
+      - /opt/sing-box/config:/etc/sing-box
+      - /opt/sing-box/logs:/var/log/sing-box:ro
+      - ./data:/data
+      - ./run/ctl/requests:/run/sing-box-web/ctl/requests
+      - ./run/ctl/results:/run/sing-box-web/ctl/results
+      - ./run/ctl/access:/run/sing-box-web/ctl/access # IP rules (access control page)
+      - /etc/os-release:/host/etc/os-release:ro # host OS name on the server status card
+    tmpfs: [/tmp]

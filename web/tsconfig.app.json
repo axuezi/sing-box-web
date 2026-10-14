@@ -1,0 +1,11 @@
+{
+  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "types": ["vite/client"],
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue"]
+}

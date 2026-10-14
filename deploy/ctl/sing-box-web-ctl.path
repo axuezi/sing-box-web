@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch sing-box-web control requests
+
+[Path]
+DirectoryNotEmpty=/opt/sing-box-web/run/ctl/requests
+MakeDirectory=yes
+
+[Install]
+WantedBy=multi-user.target

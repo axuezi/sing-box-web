@@ -1,0 +1,45 @@
+version: 2
+
+project_name: sing-box-web
+
+before:
+  hooks:
+    - make web
+
+builds:
+  - main: ./cmd/sing-box-web
+    binary: sing-box-web
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X github.com/axuezi/sing-box-web/internal/version.Version={{ .Tag }}
+      - -X github.com/axuezi/sing-box-web/internal/version.Commit={{ .ShortCommit }}
+      - -X github.com/axuezi/sing-box-web/internal/version.Date={{ .Date }}
+
+archives:
+  # No version in the name, so install.sh can fetch
+  # releases/latest/download/sing-box-web_linux_<arch>.tar.gz.
+  - name_template: '{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}'
+    formats: [tar.gz]
+    files: [LICENSE, README.md, README.zh-CN.md]
+
+checksum:
+  name_template: checksums.txt
+  extra_files:
+    - glob: ./dist-singbox/*.tar.gz
+
+release:
+  github:
+    owner: axuezi
+    name: sing-box-web
+  extra_files:
+    - glob: ./dist-singbox/*.tar.gz
+    - glob: ./install.sh
+
+changelog:
+  sort: asc
+  filters:
+    exclude: ['^docs:', '^chore:', '^test:']

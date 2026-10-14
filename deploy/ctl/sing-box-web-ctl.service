@@ -1,0 +1,10 @@
+[Unit]
+Description=Run sing-box-web control requests
+After=docker.service
+# The panel polls status every second during health checks; systemd's
+# default start limit (5 per 10s) would otherwise wedge the path unit.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/sing-box-web-ctl
