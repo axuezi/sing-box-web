@@ -4,7 +4,7 @@
 
 ## 项目是什么
 
-sing-box-web 是 sing-box 的 Web 管理后台，**管理现有的 `config.json` 而不是接管它**。Go 单二进制（net/http + SQLite）内嵌 Vue 3 前端，以 GPL-3.0 开源。当前版本 v1.0.0，变化记在 [CHANGELOG.md](CHANGELOG.md)。
+sing-box-web 是 sing-box 的 Web 管理后台，**管理现有的 `config.json` 而不是接管它**。Go 单二进制（net/http + SQLite）内嵌 Vue 3 前端，以 GPL-3.0 开源。当前版本 v1.0.1，变化记在 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 底线（不可违反）
 

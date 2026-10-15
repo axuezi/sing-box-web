@@ -4,7 +4,7 @@
 
 A lightweight web admin UI for [sing-box](https://github.com/SagerNet/sing-box) that **manages your existing `config.json` instead of replacing it**.
 
-Current version: **v1.0.0**, running stably on a single host with up to about twenty users.
+Current version: **v1.0.1**, running stably on a single host with up to about twenty users.
 
 ## Features
 
@@ -57,7 +57,7 @@ The script:
 It asks where to listen: `127.0.0.1` only by default (reach it through an SSH tunnel or a reverse proxy with TLS), or a public address on a random port (plain HTTP, not recommended long term).
 
 ```bash
-bash install.sh --version v1.0.0 --listen 127.0.0.1:9091 --yes   # pin version and address, no prompts
+bash install.sh --version v1.0.1 --listen 127.0.0.1:9091 --yes   # pin version and address, no prompts
 bash install.sh uninstall            # remove the panel (keeps data, leaves sing-box alone)
 bash install.sh uninstall --purge    # also delete its data
 ```
@@ -73,7 +73,7 @@ The one-line install uses the systemd controller; the access control page (nftab
 Run it on the same host as sing-box. The image bundles a sing-box binary for `sing-box check`; build it on top of the sing-box image you actually run:
 
 ```bash
-docker build --build-arg SINGBOX_IMAGE=<your sing-box image> -t sing-box-web:v1.0.0 .
+docker build --build-arg SINGBOX_IMAGE=<your sing-box image> -t sing-box-web:v1.0.1 .
 ```
 
 1. Install the host-side control unit: see [deploy/README.md](deploy/README.md).
