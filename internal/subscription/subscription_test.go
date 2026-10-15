@@ -63,7 +63,7 @@ func TestSingBox(t *testing.T) {
 }
 
 func TestMihomo(t *testing.T) {
-	out, err := Mihomo(clients(t))
+	out, err := Mihomo(clients(t), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,5 +73,44 @@ func TestMihomo(t *testing.T) {
 	}
 	if !strings.Contains(s, `"name":"hy2-in"`) || !strings.Contains(s, `"hy2-in", "vless-in", `) {
 		t.Errorf("proxies missing from profile:\n%s", s)
+	}
+}
+
+func TestMihomoCustomTemplate(t *testing.T) {
+	tmpl := "mixed-port: 7890\nproxies:\n{{proxies}}\nproxy-groups:\n  - {name: AI, type: select, proxies: [{{proxy_names}}DIRECT]}\n"
+	out, err := Mihomo(clients(t), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.HasPrefix(s, "mixed-port: 7890\nproxies:\n  - {") || strings.Contains(s, "7897") ||
+		!strings.Contains(s, `proxies: ["hy2-in", "vless-in", DIRECT]`) {
+		t.Fatalf("custom template not used:\n%s", s)
+	}
+	// The built-in template is unchanged by the new parameter.
+	def, _ := Mihomo(clients(t), "")
+	same, _ := Mihomo(clients(t), DefaultMihomoTemplate())
+	if string(def) != string(same) {
+		t.Fatal("empty template should render the built-in one")
+	}
+}
+
+func TestNormalizeMihomoTemplate(t *testing.T) {
+	for _, c := range []struct {
+		in, want string
+		ok       bool
+	}{
+		{"", "", true},
+		{DefaultMihomoTemplate(), "", true}, // a copy of the default follows the default
+		{"a: 1\r\nproxies:\r\n{{proxies}}\r\n", "a: 1\nproxies:\n{{proxies}}\n", true},
+		{"proxies:\n  {{proxies}}\n", "proxies:\n  {{proxies}}\n", true},
+		{"proxies: {{proxies}}\n", "", false}, // must be on its own line
+		{"mode: rule\n", "", false},
+		{"proxies:\n{{proxies}}\n" + strings.Repeat("#", MaxMihomoTemplate), "", false},
+	} {
+		got, err := NormalizeMihomoTemplate(c.in)
+		if (err == nil) != c.ok || got != c.want {
+			t.Errorf("NormalizeMihomoTemplate(%.30q) = %.30q, %v", c.in, got, err)
+		}
 	}
 }

@@ -76,6 +76,10 @@ export function useApplyFeedback() {
       message.error(t('apply.tagTaken'))
       return true
     }
+    if (e.code === 'bad_mihomo_template') {
+      message.error(t('mihomoTpl.invalid', { p: '{{proxies}}' }))
+      return true
+    }
     if (e.code === 'stale') {
       message.warning(t('apply.stale'), { duration: 6000 })
       return true

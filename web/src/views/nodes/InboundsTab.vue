@@ -6,6 +6,7 @@ import type { DataTableColumns } from 'naive-ui'
 import { api, del, put, type ApplyResult, type InboundItem, type InboundsResponse } from '../../api'
 import { isNetworkError, useApplyFeedback } from '../../composables/applyFeedback'
 import InboundFormDrawer from './InboundFormDrawer.vue'
+import MihomoTemplateDrawer from './MihomoTemplateDrawer.vue'
 import MobileCards from '../../components/MobileCards'
 import { useIsMobile } from '../../composables/viewport'
 
@@ -22,25 +23,34 @@ const message = useMessage()
 // The address clients connect to; each inbound can override it.
 const host = ref('')
 const hostBusy = ref(false)
-async function saveHost() {
-  hostBusy.value = true
+const customTemplate = ref(false)
+const templateOpen = ref(false)
+type SubSettings = { public_host: string; mihomo_template?: string; inbounds: Record<string, unknown> }
+async function saveSub(patch: Partial<SubSettings>, busyRef: typeof hostBusy, done: string) {
+  busyRef.value = true
   try {
-    const cur = await api<{ settings: { public_host: string; inbounds: Record<string, unknown> } }>('/settings/subscription')
-    await put('/settings/subscription', { ...cur.settings, public_host: host.value.trim() })
-    message.success(t('inbounds.hostSaved'))
+    const cur = await api<{ settings: SubSettings }>('/settings/subscription')
+    await put('/settings/subscription', { ...cur.settings, ...patch })
+    message.success(t(done))
     await load()
   } catch (e) {
     feedback.failure(e)
   } finally {
-    hostBusy.value = false
+    busyRef.value = false
   }
 }
+const saveHost = () => saveSub({ public_host: host.value.trim() }, hostBusy, 'inbounds.hostSaved')
 const editing = ref<InboundItem | null>(null)
 
 async function load() {
   try {
-    data.value = await api<InboundsResponse>('/inbounds')
-    host.value = data.value.public_host
+    const [inb, sub] = await Promise.all([
+      api<InboundsResponse>('/inbounds'),
+      api<{ settings: SubSettings }>('/settings/subscription'),
+    ])
+    data.value = inb
+    host.value = inb.public_host
+    customTemplate.value = !!sub.settings.mihomo_template
   } catch (e) {
     if (!isNetworkError(e)) feedback.failure(e)
   }
@@ -164,7 +174,20 @@ const columns = computed<DataTableColumns<InboundItem>>(() => [
         </NButton>
       </div>
     </div>
+    <div class="host host-row">
+      <div class="host-label">
+        <b>{{ t('mihomoTpl.title') }}</b>
+        <NText depth="3" class="hint">{{ t('mihomoTpl.cardHint') }}</NText>
+      </div>
+      <div class="host-input tpl">
+        <NTag size="small" :bordered="false" :type="customTemplate ? 'success' : 'default'">
+          {{ customTemplate ? t('mihomoTpl.custom') : t('mihomoTpl.builtIn') }}
+        </NTag>
+        <NButton :disabled="!data" @click="templateOpen = true">{{ t('common.edit') }}</NButton>
+      </div>
+    </div>
   </NCard>
+  <MihomoTemplateDrawer v-model:show="templateOpen" @saved="load" />
   <NCard size="small">
     <template #header>{{ data ? t('inbounds.count', { n: data.inbounds.length }) : '' }}</template>
     <template #header-extra>
@@ -221,6 +244,11 @@ const columns = computed<DataTableColumns<InboundItem>>(() => [
   gap: 8px 24px;
   align-items: center;
 }
+.host-row {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--n-border-color, rgba(128, 128, 128, 0.2));
+}
 .host-label {
   flex: 1 1 260px;
 }
@@ -231,6 +259,10 @@ const columns = computed<DataTableColumns<InboundItem>>(() => [
   display: flex;
   gap: 8px;
   flex: 1 1 320px;
+}
+.host-input.tpl {
+  align-items: center;
+  justify-content: flex-end;
 }
 .others {
   margin-top: 16px;

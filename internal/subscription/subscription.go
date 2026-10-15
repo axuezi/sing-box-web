@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -18,6 +19,9 @@ import (
 type Settings struct {
 	// PublicHost is the address clients connect to (IP or domain).
 	PublicHost string `json:"public_host"`
+	// MihomoTemplate replaces the built-in Mihomo profile; empty = built-in.
+	// See ValidateMihomoTemplate for what it must contain.
+	MihomoTemplate string `json:"mihomo_template,omitempty"`
 	// Inbounds holds per-inbound overrides keyed by tag.
 	Inbounds map[string]InboundSettings `json:"inbounds"`
 }
@@ -75,10 +79,44 @@ func Clients(raw []byte, u store.User, s Settings, flows ...map[string]string) (
 //go:embed mihomo.yaml
 var mihomoTemplate string
 
-// Mihomo renders a complete Mihomo profile for the user's proxies.
-// Proxies are written as JSON flow mappings, which every YAML parser
-// accepts and which need no YAML-specific escaping.
-func Mihomo(clients []protocol.Client) ([]byte, error) {
+// DefaultMihomoTemplate is the built-in Mihomo profile.
+func DefaultMihomoTemplate() string { return mihomoTemplate }
+
+// MaxMihomoTemplate bounds a custom template (it travels in a JSON body
+// capped at 64 KiB).
+const MaxMihomoTemplate = 32 << 10
+
+// ErrMihomoTemplate explains why a custom template was refused.
+var ErrMihomoTemplate = errors.New("the template must contain {{proxies}} on a line of its own and be at most 32 KiB")
+
+// NormalizeMihomoTemplate prepares a custom template for storage: line
+// endings become \n, and a copy of the built-in template is stored as empty
+// so it keeps following the built-in one.
+func NormalizeMihomoTemplate(t string) (string, error) {
+	t = strings.ReplaceAll(t, "\r\n", "\n")
+	if strings.TrimSpace(t) == "" || t == mihomoTemplate {
+		return "", nil
+	}
+	if len(t) > MaxMihomoTemplate {
+		return "", ErrMihomoTemplate
+	}
+	for _, line := range strings.Split(t, "\n") {
+		if strings.TrimSpace(line) == "{{proxies}}" {
+			return t, nil
+		}
+	}
+	return "", ErrMihomoTemplate
+}
+
+// Mihomo renders a complete Mihomo profile for the user's proxies from
+// tmpl, or the built-in template when tmpl is empty. Proxies are written as
+// JSON flow mappings, which every YAML parser accepts and which need no
+// YAML-specific escaping. {{proxies}} becomes one "  - {...}" line per
+// proxy; {{proxy_names}} becomes the quoted names, each followed by ", ".
+func Mihomo(clients []protocol.Client, tmpl string) ([]byte, error) {
+	if tmpl == "" {
+		tmpl = mihomoTemplate
+	}
 	var proxies, names strings.Builder
 	for _, c := range clients {
 		p, _ := protocol.Get(c.Inbound.Type)
@@ -97,7 +135,7 @@ func Mihomo(clients []protocol.Client) ([]byte, error) {
 	if proxies.Len() == 0 {
 		proxies.WriteString("  []\n")
 	}
-	out := strings.ReplaceAll(mihomoTemplate, "{{proxies}}", strings.TrimRight(proxies.String(), "\n"))
+	out := strings.ReplaceAll(tmpl, "{{proxies}}", strings.TrimRight(proxies.String(), "\n"))
 	out = strings.ReplaceAll(out, "{{proxy_names}}", names.String())
 	return []byte(out), nil
 }
