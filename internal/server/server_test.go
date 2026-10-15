@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -187,6 +188,38 @@ func TestLoginLockoutAndFail2banLog(t *testing.T) {
 	got := strings.Join(e.auditActions(), ",")
 	if got != "login.failure,login.failure,login.failure,login.locked,login.success" {
 		t.Fatalf("audit = %s", got)
+	}
+}
+
+// Requests queued behind the argon2 slots must not keep guessing once the
+// client is locked out.
+func TestLoginLockoutHoldsUnderConcurrency(t *testing.T) {
+	e := newEnv(t)
+	const n = 12
+	codes := make(chan int, n)
+	var wg sync.WaitGroup
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes <- e.do("POST", "/api/login", `{"username":"admin","password":"wrong password!"}`).Code
+		}()
+	}
+	wg.Wait()
+	close(codes)
+	failed := 0
+	for c := range codes {
+		switch c {
+		case http.StatusUnauthorized:
+			failed++
+		case http.StatusTooManyRequests:
+		default:
+			t.Fatalf("unexpected status %d", c)
+		}
+	}
+	// Limit 3, plus at most one attempt already hashing in the other slot.
+	if failed > 4 {
+		t.Fatalf("%d of %d concurrent attempts were checked; lockout bypassed", failed, n)
 	}
 }
 

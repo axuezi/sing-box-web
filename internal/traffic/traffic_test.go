@@ -150,6 +150,51 @@ func TestCollectorCountsIncreases(t *testing.T) {
 	}
 }
 
+// The wall clock stepping (NTP, VM suspend, manual change) is not a sing-box
+// restart: nothing sing-box counted earlier may be booked again.
+func TestCollectorIgnoresClockJumps(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(dir, "db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.SaveUsers(ctx, []*store.User{{Name: "alice", Enabled: true, Password: "p", UUID: "u", SubToken: "t"}}, nil)
+	fake := &fakeStats{}
+	srv := httptest.NewUnstartedServer(fake)
+	var p http.Protocols
+	p.SetUnencryptedHTTP2(true)
+	srv.Config.Protocols = &p
+	srv.Start()
+	defer srv.Close()
+	cfg := filepath.Join(dir, "config.json")
+	os.WriteFile(cfg, []byte(fmt.Sprintf(`{"experimental":{"v2ray_api":{"listen":%q,"stats":{"enabled":true}}}}`,
+		strings.TrimPrefix(srv.URL, "http://"))), 0o600)
+	clock := time.Now()
+	c := &Collector{ConfigPath: cfg, Store: st, Location: time.UTC, Now: func() time.Time { return clock },
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	down := "user>>>alice>>>traffic>>>downlink"
+	total := func() int64 { u, _ := st.GetUser(ctx, 1); return u.CycleDown }
+
+	boot := time.Now().Add(-time.Hour)
+	fake.set(boot, down, 1_000_000)
+	if err := c.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Each step: the clock jumps, the same sing-box counts 100 more bytes.
+	for i, jump := range []time.Duration{time.Hour, -2 * time.Hour} {
+		clock = clock.Add(jump)
+		fake.set(boot, down, 1_000_000+100*(i+1))
+		if err := c.Flush(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := total(); got != 200 {
+		t.Fatalf("after clock jumps counted %d, want 200 (re-booked the counters?)", got)
+	}
+}
+
 func TestRateWindowAveragesOverSpan(t *testing.T) {
 	var w RateWindow
 	base := time.Unix(1_700_000_000, 0)

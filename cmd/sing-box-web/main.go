@@ -325,6 +325,7 @@ func passwd(args []string) error {
 	dataDir := stringFlag(fs, "data-dir", "./data", "directory for the database")
 	username := fs.String("username", "admin", "administrator username")
 	ifUnset := fs.Bool("if-unset", false, "do nothing (exit status 3) when an administrator already exists")
+	resetTOTP := fs.Bool("reset-totp", false, "also turn off two-factor authentication (lost authenticator)")
 	fs.Parse(args)
 
 	ctx := context.Background()
@@ -352,6 +353,13 @@ func passwd(args []string) error {
 		return err
 	}
 	_ = st.Audit(ctx, store.AuditEntry{Actor: "cli", IP: "local", Action: "password.set", Target: *username})
+	if *resetTOTP {
+		if err := st.SetTOTP(ctx, ""); err != nil {
+			return err
+		}
+		_ = st.Audit(ctx, store.AuditEntry{Actor: "cli", IP: "local", Action: "totp.disable", Target: *username})
+		fmt.Fprintln(os.Stderr, "two-factor authentication turned off")
+	}
 	fmt.Fprintf(os.Stderr, "administrator %q set; all sessions signed out\n", *username)
 	return nil
 }

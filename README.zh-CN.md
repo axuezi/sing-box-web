@@ -64,6 +64,8 @@ bash install.sh uninstall --purge    # 连同数据一起删除
 
 无法直接访问 GitHub 时，可以设置下载前缀：`GH_PROXY=https://<镜像>/ bash install.sh`。
 
+忘记密码或丢失二步验证器时，在服务器上重置（`-reset-totp` 同时关闭 TOTP）：`sing-box-web passwd -data-dir /var/lib/sing-box-web -reset-totp`。
+
 一键安装使用 systemd 控制方式，「访问控制」页（nftables / HAProxy / fail2ban）需要下面 Docker 部署里的宿主机控制单元，在一键安装中不可用。
 
 ### Docker 部署

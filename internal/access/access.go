@@ -174,6 +174,10 @@ type Manager struct {
 	Logger     *slog.Logger
 	Now        func() time.Time
 
+	// applyMu serializes Apply from reading the rules to the host's answer,
+	// so a slower call with an older rule set cannot land last.
+	applyMu sync.Mutex
+
 	mu       sync.Mutex
 	last     Result
 	lastSpec [32]byte
@@ -272,6 +276,8 @@ func (m *Manager) Apply(ctx context.Context, force bool) error {
 	if m.Ctl == nil {
 		return ErrUnavailable
 	}
+	m.applyMu.Lock()
+	defer m.applyMu.Unlock()
 	info, err := m.Info(ctx)
 	if err != nil {
 		return err

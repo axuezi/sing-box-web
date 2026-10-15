@@ -167,11 +167,13 @@ fail2ban $([ -n "$F2B_JAILS" ] && command -v fail2ban-client >/dev/null && echo 
   esac
 
   # Write in a directory the panel cannot see, then rename into place so a
-  # pre-planted symlink in results/ is replaced rather than followed.
+  # pre-planted symlink in results/ is replaced rather than followed. -T
+  # matters: without it, a symlink to a directory would get the file
+  # moved inside that directory.
   t=$(mktemp "$tmp/res.XXXXXX")
   printf '%s\n%s\n%s\n' "$rc" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$out" > "$t"
   chmod 644 "$t"
-  mv -f -- "$t" "$res/$id"
+  mv -fT -- "$t" "$res/$id" || rm -f -- "$t"
   logger -t sing-box-web-ctl "id=$id action=$action rc=$rc"
 done
 

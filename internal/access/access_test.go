@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -152,5 +153,54 @@ func TestManagerAllowlistAndExpiry(t *testing.T) {
 	m.Check(ctx)
 	if len(ctl.specs) != n+1 || !m.Last().OK {
 		t.Fatalf("no retry after failure: %d %+v", len(ctl.specs)-n, m.Last())
+	}
+}
+
+// slowCtl records how many ApplyAccess calls overlap.
+type slowCtl struct {
+	fakeCtl
+	mu             sync.Mutex
+	inFlight, peak int
+}
+
+func (s *slowCtl) ApplyAccess(_ context.Context, spec string) (string, error) {
+	s.mu.Lock()
+	s.inFlight++
+	s.peak = max(s.peak, s.inFlight)
+	s.mu.Unlock()
+	time.Sleep(10 * time.Millisecond)
+	s.mu.Lock()
+	s.inFlight--
+	s.mu.Unlock()
+	return "ok", nil
+}
+
+// A periodic resync and an admin change at the same moment must not race:
+// an older rule set could otherwise be handed to the host last.
+func TestApplyIsSerialized(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(dir, "db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	path := filepath.Join(dir, "config.json")
+	os.WriteFile(path, []byte(cfg), 0o600)
+	ctl := &slowCtl{fakeCtl: fakeCtl{info: control.AccessInfo{NFT: true}}}
+	m := &Manager{Store: st, Ctl: ctl, ConfigPath: path, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	var wg sync.WaitGroup
+	for range 6 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := m.Apply(ctx, true); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if ctl.peak != 1 {
+		t.Fatalf("%d ApplyAccess calls overlapped", ctl.peak)
 	}
 }

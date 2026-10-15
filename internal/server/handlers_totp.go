@@ -24,8 +24,27 @@ func (s *Server) handleTOTPStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"enabled": t.Secret != ""})
 }
 
+// refuseIfTOTPOn stops setup and enable while TOTP is on: replacing the
+// secret would let a stolen session swap out the second factor. Turning it
+// off first needs the password and a current code.
+func (s *Server) refuseIfTOTPOn(w http.ResponseWriter, r *http.Request) bool {
+	t, err := s.opts.Store.GetTOTP(r.Context())
+	if err != nil {
+		s.internalError(w, r, err)
+		return true
+	}
+	if t.Secret != "" {
+		writeError(w, http.StatusConflict, "totp_enabled", "two-factor authentication is already on; turn it off first")
+		return true
+	}
+	return false
+}
+
 // handleTOTPSetup creates a new secret to be confirmed with a code.
 func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
+	if s.refuseIfTOTPOn(w, r) {
+		return
+	}
 	secret := auth.NewTOTPSecret()
 	if err := s.opts.Store.SetSetting(r.Context(), totpPendingKey, secret); err != nil {
 		s.internalError(w, r, err)
@@ -49,16 +68,25 @@ func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	if s.refuseIfTOTPOn(w, r) {
+		return
+	}
 	pending := s.setting(ctx, totpPendingKey)
 	if pending == "" {
 		writeError(w, http.StatusBadRequest, "no_pending", "start setup first")
 		return
 	}
-	if _, ok := auth.VerifyTOTP(pending, in.Code, time.Now()); !ok {
+	step, ok := auth.VerifyTOTP(pending, in.Code, time.Now())
+	if !ok {
 		writeError(w, http.StatusBadRequest, "bad_code", "code does not match")
 		return
 	}
 	if err := s.opts.Store.SetTOTP(ctx, pending); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	// The confirming code is spent: it must not also sign someone in.
+	if _, err := s.opts.Store.UseTOTPStep(ctx, step); err != nil {
 		s.internalError(w, r, err)
 		return
 	}

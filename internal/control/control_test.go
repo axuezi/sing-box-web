@@ -76,3 +76,23 @@ func TestCtlFileTimeout(t *testing.T) {
 		t.Fatal("expected timeout")
 	}
 }
+
+// ApplyAccess leaves only spec behind: each call writes its own temp file.
+func TestApplyAccessWritesSpecAtomically(t *testing.T) {
+	dir := t.TempDir()
+	for _, d := range []string{"requests", "results", "access"} {
+		os.MkdirAll(filepath.Join(dir, d), 0o755)
+	}
+	c := &CtlFile{Dir: dir, Timeout: 50 * time.Millisecond, Poll: 10 * time.Millisecond}
+	c.ApplyAccess(context.Background(), "allowlist off\n") // no host script: times out
+	entries, _ := os.ReadDir(filepath.Join(dir, "access"))
+	if len(entries) != 1 || entries[0].Name() != "spec" {
+		t.Fatalf("access dir: %v", entries)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "access", "spec")); string(b) != "allowlist off\n" {
+		t.Fatalf("spec = %q", b)
+	}
+	if st, _ := os.Stat(filepath.Join(dir, "access", "spec")); st.Mode().Perm() != 0o644 {
+		t.Fatalf("spec mode %v", st.Mode())
+	}
+}

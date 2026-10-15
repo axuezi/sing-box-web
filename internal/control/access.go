@@ -66,12 +66,26 @@ func (c *CtlFile) AccessInfo(ctx context.Context) (AccessInfo, error) {
 
 func (c *CtlFile) ApplyAccess(ctx context.Context, spec string) (string, error) {
 	dir := filepath.Join(c.Dir, "access")
-	tmp := filepath.Join(dir, ".spec")
-	if err := os.WriteFile(tmp, []byte(spec), 0o644); err != nil {
+	// A unique dotfile per call (the host script ignores dotfiles), renamed
+	// over spec in one step.
+	f, err := os.CreateTemp(dir, ".spec-*")
+	if err != nil {
 		return "", fmt.Errorf("write access spec: %w", err)
 	}
-	if err := os.Rename(tmp, filepath.Join(dir, "spec")); err != nil {
-		return "", err
+	tmp := f.Name()
+	_, werr := f.WriteString(spec)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp, 0o644)
+	}
+	if werr == nil {
+		werr = os.Rename(tmp, filepath.Join(dir, "spec"))
+	}
+	if werr != nil {
+		os.Remove(tmp)
+		return "", fmt.Errorf("write access spec: %w", werr)
 	}
 	return c.do(ctx, "access-apply")
 }

@@ -92,6 +92,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	case <-ctx.Done():
 		return
 	}
+	// Check again once a slot is free: requests queued behind the hash
+	// slots passed the first check before earlier ones failed, and must not
+	// keep guessing after the lockout.
+	if locked, until := s.opts.Limiter.Locked(ip); locked {
+		<-s.hashSlots
+		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(time.Until(until).Seconds()))))
+		writeError(w, http.StatusTooManyRequests, "locked", "too many failed attempts; try again later")
+		return
+	}
 	okPass, verr := auth.VerifyPassword(req.Password, admin.PasswordHash)
 	<-s.hashSlots
 	if verr != nil {

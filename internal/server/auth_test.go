@@ -55,12 +55,23 @@ func TestTOTPLogin(t *testing.T) {
 	if got := *login("123456"); got != "bad_credentials" {
 		t.Fatalf("wrong code: %s", got)
 	}
-	good := codeFor(secret, now)
+	// The code that confirmed setup is spent and cannot sign in.
+	if got := *login(codeFor(secret, now)); got != "bad_credentials" {
+		t.Fatalf("setup code reused for login: %s", got)
+	}
+	good := codeFor(secret, now.Add(30*time.Second))
 	if got := *login(good); got != "ok" {
 		t.Fatalf("good code: %s", got)
 	}
 	if got := *login(good); got != "bad_credentials" {
 		t.Fatalf("replayed code accepted: %s", got)
+	}
+	// While on, the secret cannot be replaced with only a session.
+	if code, b := m.call("POST", "/api/totp/setup", ""); code != http.StatusConflict || b.Get("code").String() != "totp_enabled" {
+		t.Fatalf("setup while enabled: %d %s", code, b.Raw)
+	}
+	if code, _ := m.call("POST", "/api/totp/enable", fmt.Sprintf(`{"code":%q}`, good)); code != http.StatusConflict {
+		t.Fatalf("enable while enabled: %d", code)
 	}
 	// Disabling needs password + a fresh code; the code used to log in is spent.
 	if code, _ := m.call("POST", "/api/totp/disable", fmt.Sprintf(`{"password":"correct horse battery","code":%q}`, good)); code != http.StatusForbidden {

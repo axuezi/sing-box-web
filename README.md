@@ -64,6 +64,8 @@ bash install.sh uninstall --purge    # also delete its data
 
 If GitHub is hard to reach, set a download prefix: `GH_PROXY=https://<mirror>/ bash install.sh`.
 
+Forgot the password or lost the authenticator? Reset it on the server (`-reset-totp` also turns TOTP off): `sing-box-web passwd -data-dir /var/lib/sing-box-web -reset-totp`.
+
 The one-line install uses the systemd controller; the access control page (nftables / HAProxy / fail2ban) needs the host-side control unit from the Docker deployment and is unavailable there.
 
 ### Docker

@@ -34,6 +34,8 @@ type Collector struct {
 	// outside the usage lock, e.g. to enforce quotas without waiting for
 	// the next check. Flushes made by config changes do not call it.
 	AfterCollect func()
+	// Now is the wall clock (nil = time.Now); tests move it.
+	Now func() time.Time
 
 	mu      sync.Mutex
 	lastRun time.Time
@@ -75,15 +77,16 @@ func (c *Collector) Status() (time.Time, error) {
 const baselineKey = "stats_baseline"
 
 // baseline is what sing-box's counters read at the last collection, and
-// when the sing-box instance that produced them started.
+// how long the sing-box instance that produced them had been up.
 type baseline struct {
 	Collected time.Time        `json:"collected"`
-	Started   int64            `json:"started"` // unix seconds
+	Started   int64            `json:"started"` // unix seconds, wall clock; informational
+	Uptime    int64            `json:"uptime"`  // seconds; 0 in baselines from older versions
 	Values    map[string]int64 `json:"values"`
 }
 
 // startSlack tolerates rounding of the uptime (whole seconds) and the time
-// between reading it and the clock.
+// between reading it and the clock, for baselines without Uptime.
 const startSlack = 5
 
 // Flush collects now. Counters are read without resetting them, so other
@@ -122,7 +125,11 @@ func (c *Collector) Flush(ctx context.Context) (err error) {
 		return err
 	}
 	now := time.Now()
+	if c.Now != nil {
+		now = c.Now()
+	}
 	started := now.Add(-up2).Unix()
+	uptime := int64(up2 / time.Second)
 	if up2 < up1 {
 		return errors.New("sing-box restarted while reading counters; retrying next time")
 	}
@@ -133,7 +140,7 @@ func (c *Collector) Flush(ctx context.Context) (err error) {
 	} else if raw != "" {
 		_ = json.Unmarshal([]byte(raw), &base)
 	}
-	next := baseline{Collected: now, Started: started, Values: make(map[string]int64, len(stats))}
+	next := baseline{Collected: now, Started: started, Uptime: uptime, Values: make(map[string]int64, len(stats))}
 	for _, s := range stats {
 		next.Values[s.Name] = s.Value
 	}
@@ -143,7 +150,7 @@ func (c *Collector) Flush(ctx context.Context) (err error) {
 		// rather than book everything sing-box counted since it started.
 		return c.Store.AddTrafficAndSet(context.WithoutCancel(ctx), nil, baselineKey, string(nextRaw))
 	}
-	if diff := started - base.Started; diff > startSlack || diff < -startSlack {
+	if newInstance(base, started, uptime, stats) {
 		base.Values = map[string]int64{} // a new sing-box instance: counters began at zero
 		if boot := time.Unix(started, 0); boot.After(base.Collected) {
 			base.Collected = boot
@@ -199,6 +206,27 @@ func (c *Collector) Flush(ctx context.Context) (err error) {
 		deltas = append(deltas, *d)
 	}
 	return c.Store.AddTrafficAndSet(context.WithoutCancel(ctx), deltas, baselineKey, string(nextRaw))
+}
+
+// newInstance reports whether the counters come from a sing-box started
+// (or reloaded) since base was taken. Within one instance the uptime never
+// goes back and no counter shrinks; the wall clock is not trusted, since NTP
+// steps, VM suspends and manual changes move it. Baselines written before
+// the uptime was stored fall back to comparing start times once.
+func newInstance(base baseline, started, uptime int64, stats []v2rayapi.Stat) bool {
+	if base.Uptime > 0 {
+		if uptime < base.Uptime {
+			return true
+		}
+	} else if diff := started - base.Started; diff > startSlack || diff < -startSlack {
+		return true
+	}
+	for _, s := range stats {
+		if s.Value < base.Values[s.Name] {
+			return true
+		}
+	}
+	return false
 }
 
 // Sample is one second of live throughput.
