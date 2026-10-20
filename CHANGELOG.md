@@ -4,6 +4,15 @@
 
 ## [未发布]
 
+### 变更
+
+- 默认 Mihomo 订阅模板重写（未自定义模板的用户更新订阅后生效）：
+  - 新增 `AI` 分组（url-test 自动选可用的最快节点，节点全部不可用时拒绝而不是直连），ChatGPT / OpenAI、Claude / Anthropic、xAI / Grok 和 `geosite:category-ai-!cn` 走该分组，并经它用海外 DNS 解析。
+  - 默认 DNS 改为国内 DoH。
+  - geosite / geoip 改从 jsDelivr 下载并每日自动更新（GitHub 在国内经常连不上，规则数据缺失会导致国内网站也走代理）。
+  - 局域网地址（`GEOIP,private`、`.lan`、`.local`）、SSH（22 端口）和微信直连。
+  - Apple 只有国内 CDN（`geosite:apple-cn`）直连，其余 Apple 服务走代理。
+
 ### 修复
 
 - 流量统计连接泄漏：每次采集（默认每分钟）都会向 sing-box 的 V2Ray 统计接口新开一条 HTTP/2 连接且从不关闭，运行几天后累积上千条连接，sing-box 和后台的内存随之持续上涨。现在所有查询共用一条连接，空闲 5 分钟自动关闭。
