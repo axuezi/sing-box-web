@@ -4,7 +4,7 @@
 
 一个轻量的 [sing-box](https://github.com/SagerNet/sing-box) Web 管理后台：**管理你现有的 `config.json`，而不是接管它**。
 
-当前版本 **v1.0.1**，已在单机、二十人以内的规模上稳定运行。
+当前版本 **v1.0.2**，已在单机、二十人以内的规模上稳定运行。
 
 ## 功能
 
@@ -58,7 +58,7 @@ bash <(curl -fsSL https://github.com/axuezi/sing-box-web/releases/latest/downloa
 安装时会询问监听地址：默认只监听 `127.0.0.1`（通过 SSH 隧道或带 TLS 的反向代理访问），也可以选择公网地址加随机端口（明文 HTTP，不推荐长期使用）。
 
 ```bash
-bash install.sh --version v1.0.1 --listen 127.0.0.1:9091 --yes   # 指定版本、监听地址，不询问
+bash install.sh --version v1.0.2 --listen 127.0.0.1:9091 --yes   # 指定版本、监听地址，不询问
 bash install.sh uninstall            # 卸载后台（保留数据，sing-box 不动）
 bash install.sh uninstall --purge    # 连同数据一起删除
 ```
@@ -74,7 +74,7 @@ bash install.sh uninstall --purge    # 连同数据一起删除
 后台与 sing-box 跑在同一台机器上。镜像内置了 sing-box 二进制，用于在写入前执行 `sing-box check`；构建时请用与线上一致的 sing-box 镜像作为基础：
 
 ```bash
-docker build --build-arg SINGBOX_IMAGE=<你的 sing-box 镜像> -t sing-box-web:v1.0.1 .
+docker build --build-arg SINGBOX_IMAGE=<你的 sing-box 镜像> -t sing-box-web:v1.0.2 .
 ```
 
 1. 安装宿主机控制单元：见 [deploy/README.md](deploy/README.md)。

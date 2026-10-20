@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [1.0.2] - 2026-10-20
+
 ### 新增
 
 - 后台一键升级（一键安装）：概览页显示管理后台的新版本和更新说明，可一键升级；sing-box 由一键安装脚本安装时，还可升级到随版本发布的 sing-box（带 V2Ray API）。升级由新增的宿主机单元 `sing-box-web-upgrade.path` / `.service` 以 root 执行：按同一版本的 `checksums.txt` 校验 sha256，替换后重启并做健康检查，失败自动换回旧版本；新内核要先通过对当前配置的 `sing-box check`。下载沿用安装时的 `GH_PROXY`。升级请求和结果写入审计日志。Docker 部署只提示新版本和升级方式。已有的一键安装重新执行一次新版 `install.sh` 后即可使用。（#8）
@@ -74,5 +76,7 @@
 - 把沙箱端到端测试和截图脚本放进仓库，作为回归测试
 - 发布流程：GHCR 镜像（`.goreleaser.yaml` 目前只出二进制）
 
-[未发布]: https://github.com/axuezi/sing-box-web/compare/v1.0.0...HEAD
+[未发布]: https://github.com/axuezi/sing-box-web/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/axuezi/sing-box-web/compare/v1.0.1...v1.0.2
+[1.0.1]: https://github.com/axuezi/sing-box-web/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/axuezi/sing-box-web/releases/tag/v1.0.0
