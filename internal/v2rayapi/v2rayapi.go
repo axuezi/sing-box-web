@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,20 +29,31 @@ type Stat struct {
 	Value int64
 }
 
-// Client calls the stats service at Addr (host:port).
+// Client calls the stats service at Addr (host:port). It is cheap to
+// create per call: all Clients without HTTP share one transport.
 type Client struct {
 	Addr string
 	HTTP *http.Client
 }
 
+// sharedHTTP is the default HTTP client. Each http.Transport keeps its own
+// HTTP/2 connection open, so a transport per Client leaked one connection
+// to sing-box per collection; the idle timeout also closes the shared one
+// once collections stop (e.g. after the API address changes).
+var sharedHTTP = sync.OnceValue(func() *http.Client {
+	var p http.Protocols
+	p.SetUnencryptedHTTP2(true)
+	return &http.Client{
+		Transport: &http.Transport{Protocols: &p, IdleConnTimeout: 5 * time.Minute},
+		Timeout:   5 * time.Second,
+	}
+})
+
 func (c *Client) httpClient() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	var p http.Protocols
-	p.SetUnencryptedHTTP2(true)
-	c.HTTP = &http.Client{Transport: &http.Transport{Protocols: &p}, Timeout: 5 * time.Second}
-	return c.HTTP
+	return sharedHTTP()
 }
 
 // QueryStats returns counters matching any of patterns (substring match);

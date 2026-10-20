@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -86,6 +88,40 @@ func TestGRPCError(t *testing.T) {
 	_, err := (&Client{Addr: strings.TrimPrefix(srv.URL, "http://")}).QueryStats(context.Background(), []string{"x"}, false)
 	if err == nil || !strings.Contains(err.Error(), "unknown service") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestClientsShareConnection guards against a connection leak: the
+// collector builds a new Client every minute, and each used to open (and
+// keep) its own HTTP/2 connection to sing-box.
+func TestClientsShareConnection(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("Trailer", "Grpc-Status")
+		w.Write(make([]byte, 5))
+		w.Header().Set("Grpc-Status", "0")
+	})
+	srv := httptest.NewUnstartedServer(h)
+	var p http.Protocols
+	p.SetUnencryptedHTTP2(true)
+	srv.Config.Protocols = &p
+	var conns atomic.Int32
+	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	srv.Start()
+	defer srv.Close()
+
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	for range 20 {
+		if _, err := (&Client{Addr: addr}).QueryStats(context.Background(), []string{"user>>>"}, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := conns.Load(); n != 1 {
+		t.Fatalf("20 clients opened %d connections, want 1", n)
 	}
 }
 
