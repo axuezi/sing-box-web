@@ -54,8 +54,9 @@ func TestTrafficAnalysis(t *testing.T) {
 		owner.Get("cmp.down").Int() != wantCmp || owner.Get("cmp.series.6").Raw != wantCmpDay {
 		t.Fatalf("owner: %s", owner.Raw)
 	}
-	if g := b.Get(`items.#(key=="3")`); !g.Get("gone").Bool() || g.Get("cmp.up").Int() != 3 || g.Get("up").Int() != 0 {
-		t.Fatalf("deleted user kept with history: %s", g.Raw)
+	// Deleting a user removes its history too.
+	if g := b.Get(`items.#(key=="3")`); g.Exists() {
+		t.Fatalf("deleted user still has history: %s", g.Raw)
 	}
 	if a := b.Get(`items.#(name=="alice")`); a.Get("up").Int() != 1 || a.Get("cmp.up").Int() != 2 {
 		t.Fatalf("alice: %s", a.Raw)

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -126,14 +127,35 @@ func (s *Store) UserBySubToken(ctx context.Context, token string) (User, error) 
 
 // SaveUsers applies a set of user changes in one transaction: users with
 // ID 0 are inserted (their IDs are filled in), others are updated, and ids
-// in deleted are removed.
+// in deleted are removed together with their traffic totals, flow rows and
+// subscription log, so a deleted user leaves nothing behind in the stats.
 func (s *Store) SaveUsers(ctx context.Context, upsert []*User, deleted []int64) error {
 	return s.Transaction(ctx, func(ctx context.Context) error {
 		tx := s.executor(ctx)
 		now := s.now().Unix()
 		for _, id := range deleted {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id); err != nil {
+			var name string
+			err := tx.QueryRowContext(ctx, `SELECT name FROM users WHERE id = ?`, id).Scan(&name)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
 				return err
+			}
+			// Traffic totals are keyed by user id, flow rows by name.
+			for _, q := range []struct {
+				sql string
+				arg any
+			}{
+				{`DELETE FROM traffic_daily WHERE kind = 'user' AND key = ?`, strconv.FormatInt(id, 10)},
+				{`DELETE FROM traffic_hourly WHERE kind = 'user' AND key = ?`, strconv.FormatInt(id, 10)},
+				{`DELETE FROM traffic_flows WHERE user = ?`, name},
+				{`DELETE FROM sub_access WHERE user_id = ?`, id},
+				{`DELETE FROM users WHERE id = ?`, id},
+			} {
+				if _, err := tx.ExecContext(ctx, q.sql, q.arg); err != nil {
+					return err
+				}
 			}
 		}
 		for _, u := range upsert {

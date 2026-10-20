@@ -408,7 +408,7 @@ export default {
     connect: 'Connect',
     reset: 'Reset',
     delete: 'Delete',
-    deleteConfirm: 'Delete user {name}? Their subscription stops working immediately.',
+    deleteConfirm: 'Delete user {name}? Their subscription stops working immediately, and their traffic history, flows and subscription log are deleted too. This cannot be undone.',
     resetTitle: 'Reset credentials for {name}',
     resetPassword: 'Password (Hysteria2, …)',
     resetUuid: 'UUID (VLESS, …)',

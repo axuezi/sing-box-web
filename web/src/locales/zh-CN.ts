@@ -408,7 +408,7 @@ export default {
     connect: '连接信息',
     reset: '重置',
     delete: '删除',
-    deleteConfirm: '删除用户 {name}？其订阅链接会立即失效。',
+    deleteConfirm: '删除用户 {name}？其订阅链接会立即失效，流量统计、访问流向和订阅记录也会一并删除，无法恢复。',
     resetTitle: '重置 {name} 的凭据',
     resetPassword: '密码（Hysteria2 等）',
     resetUuid: 'UUID（VLESS 等）',
