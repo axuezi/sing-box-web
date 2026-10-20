@@ -28,7 +28,8 @@
 | `internal/inbounds` | Hysteria2 / VLESS 入站表单与配置之间的映射，只动表单管的字段 |
 | `internal/outbounds` | 常见出站类型的表单映射、引用查找（路由、DNS、经由、规则集下载等）、经由循环检测 |
 | `internal/dnsconf` | DNS 全局设置与 1.12+ 格式服务器的表单映射、引用查找、DNS 规则摘要 |
-| `internal/release` | 定期查询 GitHub 上 sing-box 最新稳定版，供概览提示 |
+| `internal/release` | 定期查询 GitHub 上 sing-box 与 sing-box-web 的最新稳定版，供概览提示和一键升级 |
+| `internal/upgrade` | 一键升级：向宿主机升级单元投递请求、读取升级状态 |
 | `internal/subscription` | 订阅：Mihomo YAML、sing-box JSON、分享链接 |
 | `internal/limits` | 到期与流量额度：每分钟检查，超限移出配置、解除后恢复 |
 | `internal/traffic` | V2Ray 统计采集、按天 / 小时落盘；实时速率采样 |
@@ -84,10 +85,14 @@
 - 经由（detour）与地址解析（domain_resolver）在写入前检查目标存在且不成环。
 - DNS 规则只做摘要展示，不提供编辑（与路由规则一样由用户在 config.json 维护）。sing-box 1.14 起 route 动作里的 `strategy` 已弃用；实测它与较新的规则写法（如 `query_type`）同时出现时，`sing-box check` 会直接报错，所以页面会提示迁移。
 
-## 版本提示（`internal/release`）
+## 版本提示与一键升级（`internal/release`、`internal/upgrade`）
 
-- 启动 30 秒后及每 6 小时请求一次 GitHub `releases/latest`（只取稳定版），缓存在内存；`/api/status` 在最新版比运行中的版本新时附带 `runtime.update`。版本比较只看 `x.y.z`，同号时运行中的预发布版视为更旧。
-- 只提示不升级：线上 sing-box 往往是自建镜像（如带 V2Ray API），升级需要管理员自己重新构建。`-update-check off` 可完全关闭对外请求。
+- 启动 30 秒后及每 6 小时请求一次 GitHub `releases/latest`（只取稳定版），缓存在内存；sing-box 上游和本项目各一个检查器。`/api/status` 在 sing-box 最新版比运行中的版本新时附带 `runtime.update`。版本比较只看 `x.y.z`，同号时运行中的预发布版视为更旧。`-update-check off` 可完全关闭对外请求。
+- 本项目的发布说明末尾有发布流程写入的 HTML 注释 `<!-- sing-box-v2api: vX.Y.Z -->`，标明随版本附带的 sing-box 版本；后台据此判断内核能否升级，不需要下载任何文件。
+- 一键升级只在一键安装下可用（`-upgrade-dir` 非空）。后台不替换任何二进制（`ProtectSystem=strict` 下它也写不了 `/usr/local/bin`），只把一行 `panel vX.Y.Z` 或 `sing-box vX.Y.Z` 写进 `<upgrade-dir>/requests`，与 ctlfile 相同；`sing-box-web-upgrade.path` 触发以 root 运行的 `deploy/upgrade/sing-box-web-upgrade`。版本号取自后台自己的版本检查，不接受浏览器传入；脚本仍按白名单校验目标和 `vX.Y.Z` 格式，超过 1 分钟的请求直接丢弃。
+- 脚本按同一版本的 `checksums.txt` 校验 sha256，旧二进制保存在 `/var/lib/sing-box-web-upgrade`（root 专用）。后台：替换、重启后 30 秒内 `/api/health` 必须报告新版本号，否则换回；内核：只限一键安装装的（数据目录有 `.installed-sing-box`），新内核须带 `with_v2ray_api` 并通过对当前配置的 `sing-box check`，重启后 13 秒内必须保持运行且未被 systemd 重启过，否则换回。
+- 升级后台会重启后台本身，所以没有同步应答：脚本把进度和结果写到 `<upgrade-dir>/status/state`（`key=value`），后台读取后显示，并在结果出来后写一次审计日志（升级单元写不了数据库）。请求 90 秒无人处理、或运行超过 20 分钟未结束，都显示为失败。
+- Docker 部署不设 `-upgrade-dir`，只提示新版本和手动升级方式。签名校验（cosign / minisign）暂未做，完整性只依赖同一 release 的 sha256。
 
 ## 在线状态与访问流向
 

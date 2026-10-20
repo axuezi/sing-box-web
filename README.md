@@ -10,7 +10,7 @@ Current version: **v1.0.1**, running stably on a single host with up to about tw
 
 | Page | What it does |
 |---|---|
-| Overview | Server health (CPU, memory, swap, disk, load), live throughput, sing-box status with reload / restart and a version notice, inbound summary, this month's traffic per user, recent activity |
+| Overview | Server health (CPU, memory, swap, disk, load), live throughput, sing-box status with reload / restart, new-version notices and one-click upgrades of the panel and its bundled sing-box, inbound summary, this month's traffic per user, recent activity |
 | Users | Create, edit, disable, delete; expiry date and monthly quota, with automatic removal from the config when exceeded and restore on renewal; online status; subscription links, share links and QR codes |
 | Traffic | Hourly, daily and monthly traffic by user / inbound / outbound with period comparison; a "Flows" Sankey of user → client IP → site → outbound (recording is opt-in); live "Connections", filter and close |
 | Nodes | Inbounds: Hysteria2 and VLESS (including Reality) forms with one-click self-signed certificates and Reality keys; Outbounds: direct / SOCKS5 / HTTP / Shadowsocks / VLESS / Trojan / Hysteria2 forms (chaining, source address, name resolution); DNS: global settings and server forms, rules shown read-only. Other types are listed read-only |
@@ -53,6 +53,7 @@ The script:
 - **Prepares the config**: creates a minimal config if there is none; otherwise lists what it would add (a log file, the Clash API on loopback with a secret, the V2Ray stats API) and, once you agree, keeps a backup, validates with `sing-box check` and swaps it in. Existing fields are left alone.
 - **Installs the panel**: binary in `/usr/local/bin/sing-box-web`, data in `/var/lib/sing-box-web`, settings in `/etc/default/sing-box-web`, running as the systemd service `sing-box-web` and controlling sing-box with `systemctl reload`.
 - **Administrator**: a random password is generated on first install and shown once. Re-running the script upgrades and keeps data, settings and password.
+- **One-click upgrades**: installs the root unit `sing-box-web-upgrade.path` / `.service`. When a new release is out, the Overview offers to upgrade the panel, and — if the script installed sing-box — the sing-box build attached to that release. The panel only drops a request; the unit downloads the assets (through `GH_PROXY` if set at install), verifies them against the release's `checksums.txt`, swaps them in, restarts and health-checks the service, and puts the old binary back if it does not come up. A new sing-box must first pass `sing-box check` on the current config; restarting it drops all proxy connections for a few seconds.
 
 It asks where to listen: `127.0.0.1` only by default (reach it through an SSH tunnel or a reverse proxy with TLS), or a public address on a random port (plain HTTP, not recommended long term).
 
@@ -62,7 +63,7 @@ bash install.sh uninstall            # remove the panel (keeps data, leaves sing
 bash install.sh uninstall --purge    # also delete its data
 ```
 
-If GitHub is hard to reach, set a download prefix: `GH_PROXY=https://<mirror>/ bash install.sh`.
+If GitHub is hard to reach, set a download prefix: `GH_PROXY=https://<mirror>/ bash install.sh`. It is saved in `/etc/default/sing-box-web` and also used by one-click upgrades.
 
 Forgot the password or lost the authenticator? Reset it on the server (`-reset-totp` also turns TOTP off): `sing-box-web passwd -data-dir /var/lib/sing-box-web -reset-totp`.
 
@@ -86,6 +87,8 @@ docker build --build-arg SINGBOX_IMAGE=<your sing-box image> -t sing-box-web:v1.
 
 4. Put a reverse proxy with TLS (Caddy, Nginx, …) in front; the panel itself listens on 127.0.0.1 only.
 
+The Overview tells you when a new release is out; upgrade by rebuilding the image and recreating the container (one-click upgrades are for the one-line install).
+
 ### Options
 
 Every flag can also be set as `SBW_<FLAG>` in the environment, e.g. `SBW_LISTEN`.
@@ -104,7 +107,10 @@ Every flag can also be set as `SBW_<FLAG>` in the environment, e.g. `SBW_LISTEN`
 | `-auth-log` | empty | Append failed logins here for fail2ban |
 | `-gateway-log` | empty | UDP address receiving a front TCP proxy's (e.g. HAProxy) connection log, to show real client IPs for inbounds behind it such as Reality |
 | `-trusted-proxies` | `127.0.0.1/32,::1/128` | Reverse proxies allowed to set `X-Forwarded-*` |
-| `-update-check` | `on` | Ask GitHub (api.github.com) every 6 hours for the latest stable sing-box, only to show a notice; `off` disables it |
+| `-update-check` | `on` | Ask GitHub (api.github.com) every 6 hours for the latest stable sing-box and sing-box-web releases; `off` disables it (and with it one-click upgrades) |
+| `-release-repo` | `axuezi/sing-box-web` | Repository whose releases are offered for upgrade |
+| `-release-api` | `https://api.github.com` | GitHub API base URL for the update check, e.g. a mirror |
+| `-upgrade-dir` | empty | Directory shared with the upgrade unit; set by the one-line install. Empty: new versions are only shown |
 
 ## Development
 

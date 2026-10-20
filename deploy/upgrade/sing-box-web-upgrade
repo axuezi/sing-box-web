@@ -1,0 +1,207 @@
+#!/bin/sh
+# Host-side one-click upgrades for a sing-box-web installed by install.sh.
+# Run as root by sing-box-web-upgrade.service whenever the panel drops a
+# request into $UPGRADE_DIR/requests (sing-box-web-upgrade.path). A request
+# is one line, "panel vX.Y.Z" or "sing-box vX.Y.Z", naming a sing-box-web
+# release; sing-box upgrades install the build attached to that release.
+#
+# Assets are verified against the release's checksums.txt. The old binary is
+# kept; if the new version does not come up healthy it is put back. Progress
+# and outcome go to $UPGRADE_DIR/status/state ("key=value" lines), which the
+# panel shows. The panel is not trusted: nothing in a request is used
+# unless it matches the shapes below.
+set -u
+umask 022
+
+SBW_ENV=${SBW_ENV:-/etc/default/sing-box-web}
+SBW_BIN=/usr/local/bin/sing-box-web
+SB_BIN=/usr/local/bin/sing-box
+SELF=/usr/local/libexec/sing-box-web-upgrade
+SBW_UNIT=sing-box-web.service
+SB_UNIT=sing-box.service
+# StateDirectory of the service: root-only scratch space and old binaries.
+WORK=${STATE_DIRECTORY:-/var/lib/sing-box-web-upgrade}
+
+# envval NAME: a value from the panel's settings file. Parsed, not sourced.
+envval() { sed -n "s/^$1=//p" "$SBW_ENV" 2>/dev/null | tail -n1 | tr -d '"'"'"; }
+
+DATA=$(envval SBW_DATA_DIR); DATA=${DATA:-/var/lib/sing-box-web}
+UPGRADE_DIR=$(envval SBW_UPGRADE_DIR); UPGRADE_DIR=${UPGRADE_DIR:-$DATA/upgrade}
+REPO=$(envval SBW_RELEASE_REPO); REPO=${REPO:-axuezi/sing-box-web}
+GH_PROXY=$(envval GH_PROXY)
+LISTEN=$(envval SBW_LISTEN); LISTEN=${LISTEN:-127.0.0.1:9091}
+SB_CONF=$(envval SBW_SINGBOX_CONFIG); SB_CONF=${SB_CONF:-/etc/sing-box/config.json}
+
+case "$REPO" in */*) ;; *) echo "bad SBW_RELEASE_REPO: $REPO" >&2; exit 1 ;; esac
+printf '%s' "$REPO" | grep -Eqx '[A-Za-z0-9._-]+/[A-Za-z0-9._-]+' || { echo "bad SBW_RELEASE_REPO: $REPO" >&2; exit 1; }
+
+req="$UPGRADE_DIR/requests"
+status="$UPGRADE_DIR/status"
+mkdir -p "$WORK" "$status"
+chmod 0700 "$WORK"
+
+case "$(uname -m)" in
+  x86_64 | amd64) ARCH=amd64 ;;
+  aarch64 | arm64) ARCH=arm64 ;;
+  *) ARCH="" ;;
+esac
+
+# --- state -------------------------------------------------------------------
+
+TARGET="" FROM="" TO="" STARTED=""
+# state STATUS [MESSAGE] [finished]: write the state file atomically. The
+# temp file lives in $WORK so the panel cannot plant anything there.
+state() {
+  fin=""
+  [ "${3:-}" = finished ] && fin=$(date +%s)
+  t=$(mktemp "$WORK/state.XXXXXX")
+  {
+    printf 'target=%s\nfrom=%s\nto=%s\nstatus=%s\n' "$TARGET" "$FROM" "$TO" "$1"
+    printf 'message=%s\n' "$(printf '%s' "${2:-}" | tr '\n\r' '  ' | cut -c1-500)"
+    printf 'started=%s\n' "$STARTED"
+    [ -n "$fin" ] && printf 'finished=%s\n' "$fin"
+  } >"$t"
+  chmod 644 "$t"
+  # -T replaces a planted symlink instead of following it.
+  mv -fT -- "$t" "$status/state" || rm -f -- "$t"
+  logger -t sing-box-web-upgrade "target=$TARGET from=$FROM to=$TO status=$1 ${2:-}"
+}
+
+fail() { state failed "$1" finished; return 1; }
+
+# --- download ----------------------------------------------------------------
+
+# fetch TAG ASSET DIR: download ASSET from release TAG, verify it against
+# that release's checksums.txt and unpack it into DIR.
+fetch() {
+  base="https://github.com/$REPO/releases/download/$1"
+  sums="$DIR/checksums.txt"
+  if [ ! -f "$sums" ]; then
+    curl -fsSL --retry 3 --connect-timeout 15 --max-time 120 -o "$sums" "${GH_PROXY}$base/checksums.txt" ||
+      { echo "download failed: ${GH_PROXY}$base/checksums.txt"; return 1; }
+  fi
+  curl -fsSL --retry 3 --connect-timeout 15 --max-time 600 -o "$DIR/$2" "${GH_PROXY}$base/$2" ||
+    { echo "download failed: ${GH_PROXY}$base/$2"; return 1; }
+  want=$(awk -v n="$2" '$2 == n || $2 == "*"n {print $1}' "$sums")
+  [ -n "$want" ] || { echo "$2 is not in checksums.txt"; return 1; }
+  got=$(sha256sum "$DIR/$2" | awk '{print $1}')
+  [ "$want" = "$got" ] || { echo "checksum mismatch for $2"; return 1; }
+  mkdir -p "$3"
+  tar -xzf "$DIR/$2" -C "$3" || { echo "cannot unpack $2"; return 1; }
+}
+
+# replace SRC DEST: atomically put SRC at DEST (rename, so a running
+# program or this very script keeps its old inode).
+replace() {
+  cp -- "$1" "$2.new" && chmod 0755 "$2.new" && mv -fT -- "$2.new" "$2"
+}
+
+# --- panel -------------------------------------------------------------------
+
+panel_healthy() { # TAG
+  host=${LISTEN%:*} port=${LISTEN##*:}
+  case "$host" in 0.0.0.0 | "" | "[::]" | "::") host=127.0.0.1 ;; esac
+  i=0
+  while [ $i -lt 30 ]; do
+    body=$(curl -fsS --max-time 3 "http://$host:$port/api/health" 2>/dev/null || true)
+    case "$body" in *"\"version\":\"$1\""*) return 0 ;; esac
+    sleep 1; i=$((i + 1))
+  done
+  return 1
+}
+
+upgrade_panel() { # TAG
+  FROM=$("$SBW_BIN" version 2>/dev/null | awk '{print $2}')
+  state running "downloading"
+  out=$(fetch "$1" "sing-box-web_linux_$ARCH.tar.gz" "$DIR/panel" 2>&1) || { fail "$out"; return; }
+  new="$DIR/panel/sing-box-web"
+  [ -f "$new" ] || { fail "the archive has no sing-box-web binary"; return; }
+  ver=$("$new" version 2>/dev/null | awk '{print $2}')
+  [ "$ver" = "$1" ] || { fail "the downloaded binary reports version '$ver', not $1"; return; }
+
+  state running "installing"
+  cp -p -- "$SBW_BIN" "$WORK/sing-box-web.prev" || { fail "cannot back up $SBW_BIN"; return; }
+  replace "$new" "$SBW_BIN" || { fail "cannot install $SBW_BIN"; return; }
+  systemctl restart "$SBW_UNIT"
+  if panel_healthy "$1"; then
+    # Newer releases may also ship a newer copy of this script.
+    if [ -f "$DIR/panel/sing-box-web-upgrade" ]; then replace "$DIR/panel/sing-box-web-upgrade" "$SELF" || true; fi
+    state "done" "" finished
+    return
+  fi
+  replace "$WORK/sing-box-web.prev" "$SBW_BIN"
+  systemctl restart "$SBW_UNIT"
+  state rolled_back "the new panel did not answer its health check; restored $FROM (see: journalctl -u $SBW_UNIT)" finished
+}
+
+# --- sing-box ----------------------------------------------------------------
+
+singbox_healthy() {
+  sleep 3
+  i=0
+  while [ $i -lt 10 ]; do
+    systemctl is-active --quiet "$SB_UNIT" || return 1
+    sleep 1; i=$((i + 1))
+  done
+  # Still active, and has not been restarted by systemd in the meantime.
+  [ "$(systemctl show -p NRestarts --value "$SB_UNIT" 2>/dev/null)" = "$1" ]
+}
+
+upgrade_singbox() { # TAG
+  [ -f "$DATA/.installed-sing-box" ] || { fail "sing-box was not installed by install.sh; upgrade it yourself"; return; }
+  [ -x "$SB_BIN" ] || { fail "$SB_BIN is missing"; return; }
+  FROM=$("$SB_BIN" version 2>/dev/null | awk 'NR == 1 {print $3}')
+  state running "downloading"
+  out=$(fetch "$1" "sing-box-v2api_linux_$ARCH.tar.gz" "$DIR/sb" 2>&1) || { fail "$out"; return; }
+  new="$DIR/sb/sing-box"
+  [ -f "$new" ] || { fail "the archive has no sing-box binary"; return; }
+  chmod 0755 "$new"
+  "$new" version 2>/dev/null | grep -q with_v2ray_api || { fail "the downloaded sing-box was built without with_v2ray_api"; return; }
+  TO=$("$new" version 2>/dev/null | awk 'NR == 1 {print $3}')
+  state running "checking the current config with sing-box $TO"
+  out=$("$new" check -c "$SB_CONF" 2>&1) || { fail "sing-box $TO rejects the current config: $out"; return; }
+
+  state running "installing"
+  cp -p -- "$SB_BIN" "$WORK/sing-box.prev" || { fail "cannot back up $SB_BIN"; return; }
+  replace "$new" "$SB_BIN" || { fail "cannot install $SB_BIN"; return; }
+  if [ -d /usr/local/share/licenses/sing-box ]; then
+    cp -- "$DIR/sb/LICENSE" "$DIR/sb/SOURCE" /usr/local/share/licenses/sing-box/ 2>/dev/null || true
+  fi
+  systemctl restart "$SB_UNIT"
+  if singbox_healthy "$(systemctl show -p NRestarts --value "$SB_UNIT" 2>/dev/null)"; then
+    state "done" "" finished
+    return
+  fi
+  replace "$WORK/sing-box.prev" "$SB_BIN"
+  systemctl restart "$SB_UNIT"
+  state rolled_back "sing-box $TO did not stay up; restored $FROM (see: journalctl -u $SB_UNIT)" finished
+}
+
+# --- requests ----------------------------------------------------------------
+
+for f in "$req"/*; do
+  [ -e "$f" ] || [ -L "$f" ] || continue
+  id=$(basename -- "$f")
+  if [ -L "$f" ] || [ ! -f "$f" ]; then rm -f -- "$f"; continue; fi
+  case "$id" in '' | *[!A-Za-z0-9]*) rm -f -- "$f"; continue ;; esac
+  # Stale requests are dropped; the panel then reports that nobody answered.
+  if [ -n "$(find "$f" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then rm -f -- "$f"; continue; fi
+  line=$(head -c 128 -- "$f" | head -n 1 | tr -d '\r')
+  rm -f -- "$f"
+
+  target=${line%% *} tag=${line#* }
+  STARTED=$(date +%s) FROM="" TO=$tag
+  case "$target" in panel | sing-box) TARGET=$target ;; *) TARGET=unknown; fail "unknown target"; continue ;; esac
+  # A sing-box upgrade learns its version from the downloaded build.
+  [ "$TARGET" = panel ] || TO=""
+  printf '%s' "$tag" | grep -Eqx 'v[0-9]+\.[0-9]+\.[0-9]+' || { fail "invalid release tag"; continue; }
+  [ -n "$ARCH" ] || { fail "unsupported CPU: $(uname -m)"; continue; }
+
+  DIR=$(mktemp -d "$WORK/run.XXXXXX")
+  case "$TARGET" in
+    panel) upgrade_panel "$tag" ;;
+    sing-box) upgrade_singbox "$tag" ;;
+  esac
+  rm -rf -- "$DIR"
+done
+exit 0

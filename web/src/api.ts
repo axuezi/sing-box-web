@@ -59,6 +59,34 @@ export interface Inbound {
   server_name?: string
 }
 
+export interface ReleaseInfo {
+  version: string
+  url: string
+  checked_at: string
+  sing_box?: string
+}
+
+export type UpgradeTarget = 'panel' | 'sing-box'
+
+export interface UpgradeState {
+  target: UpgradeTarget
+  from?: string
+  to?: string
+  status: 'requested' | 'running' | 'done' | 'failed' | 'rolled_back'
+  message?: string
+  started?: string
+  finished?: string
+}
+
+/** GET /api/upgrade. Without the upgrade unit (enabled false) new versions are only shown. */
+export interface UpgradeInfo {
+  enabled: boolean
+  checking: boolean
+  panel: { current: string; latest?: ReleaseInfo; newer: boolean }
+  sing_box: { managed: boolean; current?: string; bundled?: string; newer: boolean }
+  state?: UpgradeState
+}
+
 export interface Status {
   panel: { version: string; commit: string; started_at: string; rss_bytes: number }
   service: {

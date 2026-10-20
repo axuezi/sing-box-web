@@ -10,7 +10,7 @@
 
 | 页面 | 能做什么 |
 |---|---|
-| 概览 | 服务器状态（CPU、内存、Swap、磁盘、负载）、实时速率、sing-box 运行状态与重载 / 重启、sing-box 版本提示、入站摘要、本月用户流量、最近操作 |
+| 概览 | 服务器状态（CPU、内存、Swap、磁盘、负载）、实时速率、sing-box 运行状态与重载 / 重启、新版本提示，以及管理后台和随版本发布的 sing-box 一键升级、入站摘要、本月用户流量、最近操作 |
 | 用户 | 新建、编辑、停用、删除；到期时间与每月流量额度，到期或超额自动移出配置、续期后自动恢复；在线状态；订阅链接、分享链接与二维码 |
 | 流量 | 按用户 / 入站 / 出站查看小时、天、月流量，可与上一周期等对比；「访问流向」桑基图展示用户 → 客户端 IP → 网站 → 出站（需手动开启记录）；「连接」实时连接列表，可筛选、断开 |
 | 节点配置 | 入站：Hysteria2 / VLESS（含 Reality）表单，自签证书与 Reality 密钥一键生成；出站：direct / SOCKS5 / HTTP / Shadowsocks / VLESS / Trojan / Hysteria2 表单（经由、源地址、域名解析）；DNS：全局设置与服务器表单，规则只读展示。其他类型只读列出 |
@@ -53,6 +53,7 @@ bash <(curl -fsSL https://github.com/axuezi/sing-box-web/releases/latest/downloa
 - **准备配置**：没有配置时创建一份最小配置；已有配置时列出需要添加的项（日志文件、只监听本机并带 secret 的 Clash API、V2Ray 统计 API），确认后先备份、经 `sing-box check` 校验再替换，已有字段不动。
 - **安装后台**：二进制装到 `/usr/local/bin/sing-box-web`，数据在 `/var/lib/sing-box-web`，参数在 `/etc/default/sing-box-web`，以 systemd 服务 `sing-box-web` 运行并通过 `systemctl reload` 控制 sing-box。
 - **管理员**：首次安装生成随机密码并只显示一次；重复运行即升级，保留数据、参数和密码。
+- **一键升级**：安装以 root 运行的 `sing-box-web-upgrade.path` / `.service`。有新版本时，概览页可以一键升级管理后台；sing-box 是本脚本安装的，还可以升级到随该版本发布的 sing-box。后台只投递请求，由这个单元下载（安装时设置了 `GH_PROXY` 则经由它）、按该版本的 `checksums.txt` 校验 sha256、替换、重启并做健康检查，新版本没能正常运行就换回旧的二进制。新的 sing-box 要先通过对当前配置的 `sing-box check`；重启 sing-box 会让所有代理连接断开几秒。
 
 安装时会询问监听地址：默认只监听 `127.0.0.1`（通过 SSH 隧道或带 TLS 的反向代理访问），也可以选择公网地址加随机端口（明文 HTTP，不推荐长期使用）。
 
@@ -62,7 +63,7 @@ bash install.sh uninstall            # 卸载后台（保留数据，sing-box �
 bash install.sh uninstall --purge    # 连同数据一起删除
 ```
 
-无法直接访问 GitHub 时，可以设置下载前缀：`GH_PROXY=https://<镜像>/ bash install.sh`。
+无法直接访问 GitHub 时，可以设置下载前缀：`GH_PROXY=https://<镜像>/ bash install.sh`。它会保存在 `/etc/default/sing-box-web`，一键升级同样使用。
 
 忘记密码或丢失二步验证器时，在服务器上重置（`-reset-totp` 同时关闭 TOTP）：`sing-box-web passwd -data-dir /var/lib/sing-box-web -reset-totp`。
 
@@ -86,6 +87,8 @@ docker build --build-arg SINGBOX_IMAGE=<你的 sing-box 镜像> -t sing-box-web:
 
 4. 在后台前面放一个带 TLS 的反向代理（Caddy、Nginx 等），后台本身只监听 127.0.0.1。
 
+概览会提示新版本；Docker 部署请重新构建镜像并重建容器来升级（一键升级只用于一键安装）。
+
 ### 常用参数
 
 每个参数都可以用环境变量 `SBW_<大写参数名>` 设置，例如 `SBW_LISTEN`。
@@ -104,7 +107,10 @@ docker build --build-arg SINGBOX_IMAGE=<你的 sing-box 镜像> -t sing-box-web:
 | `-auth-log` | 空 | 登录失败写入此文件，供 fail2ban 使用 |
 | `-gateway-log` | 空 | 接收前置 TCP 代理（如 HAProxy）连接日志的 UDP 地址，用于显示 Reality 等经代理入站的真实客户端 IP |
 | `-trusted-proxies` | `127.0.0.1/32,::1/128` | 允许设置 `X-Forwarded-*` 的反向代理 |
-| `-update-check` | `on` | 每 6 小时向 GitHub（api.github.com）查询 sing-box 最新稳定版，只用于提示；`off` 关闭 |
+| `-update-check` | `on` | 每 6 小时向 GitHub（api.github.com）查询 sing-box 和 sing-box-web 的最新稳定版；`off` 关闭（一键升级也随之不可用） |
+| `-release-repo` | `axuezi/sing-box-web` | 提供升级版本的仓库 |
+| `-release-api` | `https://api.github.com` | 版本检查使用的 GitHub API 地址，可换成镜像 |
+| `-upgrade-dir` | 空 | 与升级单元共享的目录，一键安装会设置；为空时只提示新版本 |
 
 ## 开发
 

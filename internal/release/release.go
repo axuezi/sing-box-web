@@ -1,7 +1,8 @@
-// Package release learns the newest stable sing-box release from GitHub, so
-// the panel can say an upgrade exists. It only informs: nothing is
-// downloaded or installed, since sing-box is usually a custom build (for
-// example with the V2Ray API) that the administrator rebuilds themselves.
+// Package release learns the newest stable release of a GitHub project:
+// sing-box itself, so the panel can say an upgrade exists, and sing-box-web,
+// whose releases also carry a sing-box build with the V2Ray API. Checking
+// never downloads or installs anything; one-click upgrades are done by the
+// host-side upgrade unit (see internal/upgrade).
 package release
 
 import (
@@ -11,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,16 +23,36 @@ import (
 // drafts and pre-releases.
 const DefaultURL = "https://api.github.com/repos/SagerNet/sing-box/releases/latest"
 
+// DefaultAPI is the GitHub API that LatestURL points at by default.
+const DefaultAPI = "https://api.github.com"
+
+// LatestURL is the "latest release" endpoint of repo ("owner/name") at api
+// (a GitHub API base URL, DefaultAPI when empty).
+func LatestURL(api, repo string) string {
+	if api == "" {
+		api = DefaultAPI
+	}
+	return strings.TrimRight(api, "/") + "/repos/" + repo + "/releases/latest"
+}
+
 // Latest is the newest stable release as last seen.
 type Latest struct {
 	Version   string    `json:"version"` // e.g. "1.14.4", without the leading v
 	URL       string    `json:"url"`     // release notes page
 	CheckedAt time.Time `json:"checked_at"`
+	// SingBox is the version of the sing-box build attached to a
+	// sing-box-web release ("" when the notes do not name one).
+	SingBox string `json:"sing_box,omitempty"`
 }
+
+// bundledRE finds the marker the release workflow puts in sing-box-web's
+// release notes: an HTML comment, so it does not show on GitHub.
+var bundledRE = regexp.MustCompile(`<!--\s*sing-box-v2api:\s*v?(\d+\.\d+\.\d+)\s*-->`)
 
 // Checker polls for the latest release every Interval.
 type Checker struct {
 	URL      string // default DefaultURL
+	Name     string // for log messages, e.g. "sing-box"; default "release"
 	Interval time.Duration
 	Client   *http.Client
 	Logger   *slog.Logger
@@ -57,7 +79,11 @@ func (c *Checker) Run(ctx context.Context) {
 	defer t.Stop()
 	for {
 		if err := c.Check(ctx); err != nil {
-			c.Logger.Debug("sing-box release check failed", "err", err)
+			name := c.Name
+			if name == "" {
+				name = "release"
+			}
+			c.Logger.Debug(name+" release check failed", "err", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -94,6 +120,7 @@ func (c *Checker) Check(ctx context.Context) error {
 	var body struct {
 		TagName    string `json:"tag_name"`
 		HTMLURL    string `json:"html_url"`
+		Body       string `json:"body"`
 		Prerelease bool   `json:"prerelease"`
 		Draft      bool   `json:"draft"`
 	}
@@ -106,6 +133,9 @@ func (c *Checker) Check(ctx context.Context) error {
 	}
 	c.mu.Lock()
 	c.latest = &Latest{Version: v, URL: body.HTMLURL, CheckedAt: time.Now()}
+	if m := bundledRE.FindStringSubmatch(body.Body); m != nil {
+		c.latest.SingBox = m[1]
+	}
 	c.mu.Unlock()
 	return nil
 }

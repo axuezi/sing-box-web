@@ -20,6 +20,9 @@ SBW_DATA=/var/lib/sing-box-web
 SBW_ENV=/etc/default/sing-box-web
 SBW_UNIT=/etc/systemd/system/sing-box-web.service
 SBW_LOGDIR=/var/log/sing-box-web
+SBW_UPGRADE_DIR=$SBW_DATA/upgrade
+UPG_BIN=/usr/local/libexec/sing-box-web-upgrade
+UPG_UNIT=/etc/systemd/system/sing-box-web-upgrade
 
 SB_UNIT=sing-box.service
 SB_BIN_DEFAULT=/usr/local/bin/sing-box
@@ -314,6 +317,55 @@ install_panel() {
   install -m 0755 "$TMP/sing-box-web_linux_$ARCH/sing-box-web" "$SBW_BIN"
   mkdir -p "$SBW_DATA" "$SBW_LOGDIR"
   chmod 0700 "$SBW_DATA"
+  UPGRADES=0
+  if [ -f "$TMP/sing-box-web_linux_$ARCH/sing-box-web-upgrade" ]; then
+    mkdir -p "$(dirname "$UPG_BIN")"
+    install -m 0755 "$TMP/sing-box-web_linux_$ARCH/sing-box-web-upgrade" "$UPG_BIN"
+    UPGRADES=1
+  fi
+}
+
+# One-click upgrades from the panel: the panel drops a request into
+# $SBW_UPGRADE_DIR/requests and this root unit carries it out (see
+# deploy/upgrade/sing-box-web-upgrade). Only for releases that ship it.
+write_upgrade_units() {
+  [ "$UPGRADES" = 1 ] || return 0
+  cat >"$UPG_UNIT.path" <<EOF
+[Unit]
+Description=Watch sing-box-web upgrade requests
+
+[Path]
+DirectoryNotEmpty=$SBW_UPGRADE_DIR/requests
+MakeDirectory=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  cat >"$UPG_UNIT.service" <<EOF
+[Unit]
+Description=Run sing-box-web upgrade requests
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=$UPG_BIN
+StateDirectory=sing-box-web-upgrade
+StateDirectoryMode=0700
+TimeoutStartSec=15min
+EOF
+  systemctl daemon-reload
+  systemctl enable --now sing-box-web-upgrade.path >/dev/null 2>&1 ||
+    warn "Could not enable sing-box-web-upgrade.path; one-click upgrades stay off." \
+      "无法启用 sing-box-web-upgrade.path，后台一键升级不可用。"
+}
+
+# set_env KEY VALUE: set KEY in $SBW_ENV, replacing an earlier value.
+set_env() {
+  if grep -q "^$1=" "$SBW_ENV"; then
+    sed -i "s|^$1=.*|$1=$2|" "$SBW_ENV"
+  else
+    printf '%s=%s\n' "$1" "$2" >>"$SBW_ENV"
+  fi
 }
 
 write_panel_files() {
@@ -333,8 +385,13 @@ SBW_TRUSTED_PROXIES=127.0.0.1/32,::1/128
 EOF
     chmod 0600 "$SBW_ENV"
   elif [ -n "$LISTEN_FLAG" ]; then
-    sed -i "s|^SBW_LISTEN=.*|SBW_LISTEN=$LISTEN|" "$SBW_ENV"
+    set_env SBW_LISTEN "$LISTEN"
   fi
+  # Added on upgrade too, so installs from older versions get them.
+  if [ "$UPGRADES" = 1 ]; then set_env SBW_UPGRADE_DIR "$SBW_UPGRADE_DIR"; fi
+  # Remembered for one-click upgrades, which download the same way.
+  if [ -n "$GH_PROXY" ]; then set_env GH_PROXY "$GH_PROXY"; fi
+  if [ "$REPO" != axuezi/sing-box-web ]; then set_env SBW_RELEASE_REPO "$REPO"; fi
   local confdir
   confdir=$(dirname "$SB_CONF")
   cat >"$SBW_UNIT" <<EOF
@@ -426,6 +483,7 @@ do_install() {
   prepare_config
   write_logrotate
   write_panel_files
+  write_upgrade_units
   set_password
 
   if [ "$SB_STATE" != unit ] || ! systemctl is-active --quiet "$SB_UNIT"; then
@@ -472,8 +530,9 @@ do_install() {
 
 do_uninstall() {
   [ "$(id -u)" = 0 ] || die "Run as root." "请用 root 运行。"
-  systemctl disable --now sing-box-web 2>/dev/null || true
-  rm -f "$SBW_UNIT" "$SBW_BIN" "$SB_LOGROTATE"
+  systemctl disable --now sing-box-web sing-box-web-upgrade.path 2>/dev/null || true
+  rm -f "$SBW_UNIT" "$SBW_BIN" "$SB_LOGROTATE" "$UPG_UNIT.path" "$UPG_UNIT.service" "$UPG_BIN"
+  rm -rf /var/lib/sing-box-web-upgrade
   if [ -f "$SB_DROPIN" ]; then rm -f "$SB_DROPIN"; rmdir "$(dirname "$SB_DROPIN")" 2>/dev/null || true; fi
   systemctl daemon-reload
   local ours=0

@@ -4,6 +4,11 @@
 
 ## [未发布]
 
+### 新增
+
+- 后台一键升级（一键安装）：概览页显示管理后台的新版本和更新说明，可一键升级；sing-box 由一键安装脚本安装时，还可升级到随版本发布的 sing-box（带 V2Ray API）。升级由新增的宿主机单元 `sing-box-web-upgrade.path` / `.service` 以 root 执行：按同一版本的 `checksums.txt` 校验 sha256，替换后重启并做健康检查，失败自动换回旧版本；新内核要先通过对当前配置的 `sing-box check`。下载沿用安装时的 `GH_PROXY`。升级请求和结果写入审计日志。Docker 部署只提示新版本和升级方式。已有的一键安装重新执行一次新版 `install.sh` 后即可使用。（#8）
+- 新参数 `-upgrade-dir`、`-release-repo`、`-release-api`；`-update-check` 现在同时检查 sing-box-web 的新版本。
+
 ### 变更
 
 - 默认 Mihomo 订阅模板重写（未自定义模板的用户更新订阅后生效）：

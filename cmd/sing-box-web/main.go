@@ -44,6 +44,7 @@ import (
 	"github.com/axuezi/sing-box-web/internal/store"
 	"github.com/axuezi/sing-box-web/internal/sysinfo"
 	"github.com/axuezi/sing-box-web/internal/traffic"
+	"github.com/axuezi/sing-box-web/internal/upgrade"
 	"github.com/axuezi/sing-box-web/internal/version"
 	"github.com/axuezi/sing-box-web/web"
 )
@@ -111,7 +112,10 @@ func serve(args []string) error {
 	authLog := stringFlag(fs, "auth-log", "", "append failed logins here for fail2ban (empty = off)")
 	gatewayLog := stringFlag(fs, "gateway-log", "", "UDP address to receive a TCP relay's connection log on, e.g. 127.0.0.1:5514, to show real client IPs (empty = off)")
 	proxies := stringFlag(fs, "trusted-proxies", "127.0.0.1/32,::1/128", "comma-separated CIDRs allowed to set X-Forwarded-*")
-	updateCheck := stringFlag(fs, "update-check", "on", "ask GitHub every 6 hours whether a newer sing-box release exists (only shown, never installed): on | off")
+	updateCheck := stringFlag(fs, "update-check", "on", "ask GitHub every 6 hours whether newer sing-box and sing-box-web releases exist: on | off")
+	releaseRepo := stringFlag(fs, "release-repo", "axuezi/sing-box-web", "GitHub repository (owner/name) whose releases the panel offers to upgrade to")
+	releaseAPI := stringFlag(fs, "release-api", release.DefaultAPI, "GitHub API base URL for the update check, e.g. a mirror")
+	upgradeDir := stringFlag(fs, "upgrade-dir", "", "directory shared with the sing-box-web-upgrade unit; enables one-click upgrades (empty = off: new versions are only shown)")
 	fs.Parse(args)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -206,11 +210,13 @@ func serve(args []string) error {
 	go recorder.Run(ctx)
 	hub := &traffic.Hub{ConfigPath: *sbConfig, OnSnapshot: recorder.Observe}
 	go hub.Run(ctx)
-	var releases *release.Checker
+	var releases, panelReleases *release.Checker
 	switch *updateCheck {
 	case "on":
-		releases = &release.Checker{Logger: logger}
+		releases = &release.Checker{Name: "sing-box", Logger: logger}
 		go releases.Run(ctx)
+		panelReleases = &release.Checker{Name: "sing-box-web", URL: release.LatestURL(*releaseAPI, *releaseRepo), Logger: logger}
+		go panelReleases.Run(ctx)
 	case "off":
 	default:
 		return fmt.Errorf("-update-check must be on or off, not %q", *updateCheck)
@@ -252,6 +258,9 @@ func serve(args []string) error {
 		Gateway:        resolver,
 		System:         &sysinfo.Reader{DiskPath: *dataDir},
 		Release:        releases,
+		PanelRelease:   panelReleases,
+		Upgrade:        &upgrade.Manager{Dir: *upgradeDir},
+		KernelManaged:  fileExists(filepath.Join(*dataDir, upgrade.KernelMark)),
 		Access:         accessMgr,
 	})
 	srv := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
@@ -298,6 +307,11 @@ func importUsers(ctx context.Context, st *store.Store, configPath string, logger
 		logger.Info("imported user from config", "name", u.Name, "inbounds", u.Inbounds)
 	}
 	return st.SetSetting(ctx, "users_imported", "1")
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func parsePrefixes(s string) ([]netip.Prefix, error) {

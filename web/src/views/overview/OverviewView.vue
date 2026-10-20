@@ -12,6 +12,7 @@ import { useRealtime } from '../../composables/realtime'
 import InfoRow from '../../components/InfoRow.vue'
 import StatCard from './StatCard.vue'
 import ServerStatus from './ServerStatus.vue'
+import UpgradeBox from './UpgradeBox.vue'
 import AuditRow from '../../components/AuditRow.vue'
 import { useIsMobile } from '../../composables/viewport'
 import LiveChart from '../../components/charts/LiveChart.vue'
@@ -190,6 +191,7 @@ const inboundColumns = computed<DataTableColumns<Inbound>>(() => [
         </InfoRow>
         <div class="divider" />
         <InfoRow :label="t('overview.panel')">{{ status.panel.version }} · {{ formatBytes(status.panel.rss_bytes) }}</InfoRow>
+        <UpgradeBox />
         <div v-if="status.service.controller !== 'none'" class="actions">
           <NButton size="small" secondary :loading="serviceBusy" @click="serviceAction(false)">
             <template #icon><RefreshCw :size="15" /></template>

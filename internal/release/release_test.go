@@ -62,3 +62,30 @@ func TestCheck(t *testing.T) {
 		t.Errorf("Latest changed to %+v", c.Latest())
 	}
 }
+
+func TestCheckBundledSingBox(t *testing.T) {
+	body := `{"tag_name":"v1.1.0","html_url":"u","body":"## Changes\n- x\n\n<!-- sing-box-v2api: v1.14.4 -->\n"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/o/r/releases/latest" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		io.WriteString(w, body)
+	}))
+	defer srv.Close()
+	c := &Checker{URL: LatestURL(srv.URL+"/", "o/r"), Logger: slog.New(slog.DiscardHandler)}
+	if err := c.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if l := c.Latest(); l.Version != "1.1.0" || l.SingBox != "1.14.4" {
+		t.Fatalf("Latest = %+v", l)
+	}
+
+	// Older releases have no marker.
+	body = `{"tag_name":"v1.0.1","html_url":"u","body":"notes"}`
+	if err := c.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if l := c.Latest(); l.SingBox != "" {
+		t.Fatalf("SingBox = %q, want empty", l.SingBox)
+	}
+}

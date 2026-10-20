@@ -33,6 +33,7 @@ import (
 	"github.com/axuezi/sing-box-web/internal/store"
 	"github.com/axuezi/sing-box-web/internal/sysinfo"
 	"github.com/axuezi/sing-box-web/internal/traffic"
+	"github.com/axuezi/sing-box-web/internal/upgrade"
 )
 
 // Options configures the server. Zero values get sensible defaults in New.
@@ -75,6 +76,15 @@ type Options struct {
 	System *sysinfo.Reader
 	// Release knows the newest sing-box release; nil = update check off.
 	Release *release.Checker
+	// PanelRelease knows the newest sing-box-web release; nil = update
+	// check off.
+	PanelRelease *release.Checker
+	// Upgrade submits one-click upgrades; nil or without Dir = off (new
+	// versions are then only shown).
+	Upgrade *upgrade.Manager
+	// KernelManaged: install.sh installed sing-box, so one-click upgrades
+	// may replace it with the build attached to sing-box-web releases.
+	KernelManaged bool
 	// Sockets lists ports bound on the host, to refuse an inbound port that
 	// another program holds; nil = read /proc/net.
 	Sockets func() ([]inbounds.Socket, bool)
@@ -90,6 +100,7 @@ type Server struct {
 	hashSlots chan struct{} // bounds concurrent argon2 work (64 MiB each)
 
 	authLogMu sync.Mutex
+	upgradeMu sync.Mutex
 }
 
 // New returns the root handler.
@@ -167,6 +178,8 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("DELETE /api/dns/servers/{tag}", s.authed(s.handleDeleteDNSServer))
 	mux.Handle("POST /api/service/reload", s.authed(s.handleService(false)))
 	mux.Handle("POST /api/service/restart", s.authed(s.handleService(true)))
+	mux.Handle("GET /api/upgrade", s.authed(s.handleGetUpgrade))
+	mux.Handle("POST /api/upgrade", s.authed(s.handleStartUpgrade))
 	mux.Handle("GET /api/settings/subscription", s.authed(s.handleGetSubSettings))
 	mux.Handle("PUT /api/settings/subscription", s.authed(s.handlePutSubSettings))
 

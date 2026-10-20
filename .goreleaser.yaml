@@ -24,7 +24,15 @@ archives:
   # releases/latest/download/sing-box-web_linux_<arch>.tar.gz.
   - name_template: '{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}'
     formats: [tar.gz]
-    files: [LICENSE, README.md, README.zh-CN.md]
+    files:
+      - LICENSE
+      - README.md
+      - README.zh-CN.md
+      # Host-side unit for one-click upgrades; install.sh installs it.
+      - src: deploy/upgrade/sing-box-web-upgrade
+        strip_parent: true
+        info:
+          mode: 0755
 
 checksum:
   name_template: checksums.txt
@@ -38,6 +46,11 @@ release:
   extra_files:
     - glob: ./dist-singbox/*.tar.gz
     - glob: ./install.sh
+  # Tells the panel which sing-box build this release carries (an HTML
+  # comment, so GitHub does not show it). See internal/release.
+  footer: |
+
+    <!-- sing-box-v2api: {{ .Env.SINGBOX_VERSION }} -->
 
 changelog:
   sort: asc
